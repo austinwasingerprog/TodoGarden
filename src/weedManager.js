@@ -1,5 +1,7 @@
 import * as PIXI from 'pixi.js';
 import { Dialog } from './ui/dialog.js';
+import { createBranchyWeed } from './plants/branchyWeed.js';
+import { createFlowerBush } from './plants/flowerBush.js';
 
 export class WeedManager {
     // app: PIXI.Application, world: PIXI.Container (world), player: PIXI.Container (player), terrain: optional Terrain
@@ -18,7 +20,12 @@ export class WeedManager {
         // splash remnants (fade & auto-remove)
         this._splashes = []; // { gfx, elapsed, dur }
 
+        this.storageKey = 'todo-garden-weeds-v1';
+
         this.initAddWeedButton();
+
+        // load persisted weeds (if any)
+        this._load();
     }
 
     initAddWeedButton() {
@@ -61,19 +68,26 @@ export class WeedManager {
         this.addWeedButton = btn;
     }
 
-    // dialog -> calls this with the text
+    // public api: called by Dialog (text string)
     addWeed(text) {
         if (!text) return;
+        // spawn near player if possible; _spawnWeed handles default positioning and overlap
+        this._spawnWeed({ text, x: null, y: null, completed: false, hits: 0 });
+        this._save();
+    }
 
-        // spawn near player x, prefer ground if terrain available
+    // internal spawn helper: accepts partial record { text, x, y, completed, hits }
+    _spawnWeed(record) {
+        const text = record.text || 'Unnamed';
+        // spawn near player x, prefer ground if terrain available; allow record.x to override
         const px = this.player?.x ?? (this.app.renderer.width / 2);
-        let spawnX = px + (Math.random() * 200 - 100);
-        const groundY = this.terrain ? this.terrain.groundY(spawnX) : (this.player?.y ?? (this.app.renderer.height / 2)) + 80;
-        let spawnY = groundY - 8;
+        let spawnX = (Number.isFinite(record.x) ? record.x : px + (Math.random() * 200 - 100));
+        const groundY = this.terrain ? this.terrain.groundY(spawnX) + 20 : (this.player?.y ?? (this.app.renderer.height / 2)) + 50;
+        let spawnY = Number.isFinite(record.y) ? record.y : groundY - 8;
 
-        // simple non-overlap: n attempts to find a free spot
+        // simple non-overlap: n attempts to find a free spot (respect saved position but relocate if overlapping)
         let tries = 0;
-        while (this.weeds.some(w => this._distance(w.x, w.y, spawnX, spawnY) < 64) && tries++ < 20) {
+        while (this.weeds.some(w => this._distance(w.x, w.y, spawnX, spawnY) < 64) && tries++ < 40) {
             spawnX += (Math.random() * 200 - 100);
             if (this.terrain) spawnY = this.terrain.groundY(spawnX) - 8;
         }
@@ -83,14 +97,8 @@ export class WeedManager {
         c.x = spawnX;
         c.y = spawnY;
 
-        // simple plant graphics (replace with sprite if you have art)
-        const plant = new PIXI.Graphics();
-        plant.beginFill(0x2e8b57);
-        plant.drawEllipse(0, -6, 10, 6); // leaves
-        plant.endFill();
-        plant.beginFill(0x1f5f2e);
-        plant.drawRect(-2, -18, 4, 12); // stem
-        plant.endFill();
+        // create procedural branchy weed (module) -- seed by text so same item is reproducible
+        const plant = createBranchyWeed(record.text ?? 'weed', { baseLength: 16, leafSize: 8 });
         c.addChild(plant);
 
         // hidden label / thought bubble text (shown when player is near)
@@ -128,7 +136,28 @@ export class WeedManager {
         c.addChild(check);
 
         this.world.addChild(c);
-        this.weeds.push({ container: c, text, x: spawnX, y: spawnY, label, bg, graphic: plant, completed: false, hits: 0, strike, check });
+
+        const weed = {
+            container: c,
+            text,
+            x: spawnX,
+            y: spawnY,
+            label,
+            bg,
+            graphic: plant,
+            completed: Boolean(record.completed),
+            hits: Number.isFinite(record.hits) ? record.hits : 0,
+            strike,
+            check,
+            flower: null
+        };
+
+        // if loaded and marked completed, immediately convert visuals to flower state
+        if (weed.completed) {
+            this._applyCompletedVisuals(weed);
+        }
+
+        this.weeds.push(weed);
     }
 
     _distance(x1, y1, x2, y2) {
@@ -178,34 +207,15 @@ export class WeedManager {
         if (weed.completed) return;
         weed.completed = true;
 
-        // remove old plant graphic and create flower
+        // remove old plant graphic and create flower bush (bigger, stems + head)
         if (weed.graphic && weed.graphic.parent) weed.graphic.destroy({ children: true, texture: false, baseTexture: false });
-        const flower = new PIXI.Container();
-        // petals
-        for (let i = 0; i < 5; i++) {
-            const p = new PIXI.Graphics();
-            p.beginFill(0xFF8FB3);
-            p.drawEllipse(0, -6, 10, 6);
-            p.endFill();
-            p.rotation = (i / 5) * Math.PI * 2;
-            p.x = 0;
-            p.y = -8;
-            flower.addChild(p);
-        }
-        // center
-        const core = new PIXI.Graphics();
-        core.beginFill(0xFFD24D);
-        core.drawCircle(0, -8, 6);
-        core.endFill();
-        flower.addChild(core);
-
-        // add small sparkle
-        const sparkle = new PIXI.Graphics();
-        sparkle.beginFill(0xFFFFFF, 0.9);
-        sparkle.drawCircle(-6, -14, 2);
-        sparkle.endFill();
-        flower.addChild(sparkle);
-
+        const flower = createFlowerBush(weed.text || Math.floor(Math.random() * 99999), {
+            stems: 1 + Math.floor(Math.random() * 2),
+            stemHeightMin: 28,
+            stemHeightMax: 56,
+            petalRadius: 14,
+            scale: 1.2
+        });
         weed.container.addChildAt(flower, 0);
         weed.flower = flower;
 
@@ -219,6 +229,35 @@ export class WeedManager {
         weed.strike.moveTo(-lw / 2, ly);
         weed.strike.lineTo(lw / 2, ly);
 
+        weed.check.visible = true;
+
+        // persist change
+        this._save();
+    }
+
+    // shared helper to apply completed visuals for loaded weeds
+    _applyCompletedVisuals(weed) {
+        // remove plant if exists
+        if (weed.graphic && weed.graphic.parent) weed.graphic.destroy({ children: true, texture: false, baseTexture: false });
+        // add flower visuals (same as _bloom but without saving)
+        const flower = createFlowerBush(weed.text || Math.floor(Math.random() * 99999), {
+            stems: 1 + Math.floor(Math.random() * 2),
+            stemHeightMin: 22,
+            stemHeightMax: 48,
+            petalRadius: 12,
+            scale: 1.1
+        });
+        weed.container.addChildAt(flower, 0);
+        weed.flower = flower;
+
+        weed.label.style = Object.assign({}, weed.label.style, { fill: 0x666666 });
+        weed.strike.clear();
+        weed.strike.visible = true;
+        const lw = weed.label.width;
+        const ly = weed.label.y - (weed.label.style.fontSize ?? 12) / 2;
+        weed.strike.lineStyle(2, 0x666666);
+        weed.strike.moveTo(-lw / 2, ly);
+        weed.strike.lineTo(lw / 2, ly);
         weed.check.visible = true;
     }
 
@@ -294,6 +333,46 @@ export class WeedManager {
                 if (s.gfx && s.gfx.parent) s.gfx.destroy();
                 this._splashes.splice(i, 1);
             }
+        }
+    }
+
+    // persist weeds -> localStorage
+    _save() {
+        try {
+            const out = this.weeds.map(w => ({
+                text: w.text,
+                x: w.x,
+                y: w.y,
+                completed: !!w.completed,
+                hits: Number(w.hits || 0)
+            }));
+            localStorage.setItem(this.storageKey, JSON.stringify(out));
+        } catch (e) {
+            // ignore storage errors on private mode, quota, etc.
+            // console.warn('weed save failed', e);
+        }
+    }
+
+    // load persisted weeds (if any)
+    _load() {
+        try {
+            const raw = localStorage.getItem(this.storageKey);
+            if (!raw) return;
+            const arr = JSON.parse(raw);
+            if (!Array.isArray(arr)) return;
+            for (const r of arr) {
+                // spawn with saved data
+                this._spawnWeed({
+                    text: r.text,
+                    x: Number.isFinite(r.x) ? r.x : null,
+                    y: Number.isFinite(r.y) ? r.y : null,
+                    completed: !!r.completed,
+                    hits: Number.isFinite(r.hits) ? r.hits : 0
+                });
+            }
+        } catch (e) {
+            // malformed data -> ignore and continue
+            // console.warn('weed load failed', e);
         }
     }
 }

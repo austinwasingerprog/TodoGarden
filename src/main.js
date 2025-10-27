@@ -27,17 +27,46 @@ PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.NEAREST;
     const frameWidth = 50;
     const frameHeight = 37;
 
-    // Build a small atlas for the first 4 frames (cols 0..3 on row 0)
+    // Build a small atlas for idle and run (cols 0..3 on row 0 for idle;
+    // RunRight is at column 1, rows 1..6 -> addGridFrames(startCol, startRow, endCol, endRow, namePrefix, animationName))
     const playerSpriteBuilder = new SpriteSheetBuilder(spritePath, frameWidth, frameHeight);
-    playerSpriteBuilder.addGridFrames(0, 0, 3, 0, 'idleFrame', 'idle');
+    playerSpriteBuilder.addGridFrames(0, 0, 3, 0, 'idleFrame', 'idle');       // idle frames (0,0 .. 3,0)
+    playerSpriteBuilder.addGridFrames(1, 1, 6, 1, 'runFrame', 'runRight');   // run-right frames (col 1..6 on row 1)
+
+    // NEW: jump is a single frame at (2,2) and falling is cols 1..2 on row 3
+    playerSpriteBuilder.addGridFrames(2, 2, 2, 2, 'jumpFrame', 'jump');      // jump (2,2)
+    playerSpriteBuilder.addGridFrames(1, 3, 2, 3, 'fallFrame', 'fall');      // fall (1,3 .. 2,3)
+
     await playerSpriteBuilder.build();
+
     const playerIdleAnim = playerSpriteBuilder.createAnimatedSprite('idle', { animationSpeed: 0.08, scale: 4 });
     playerIdleAnim.play();
+
+    // Create run animation (we'll flip this for left)
+    const playerRunAnim = playerSpriteBuilder.createAnimatedSprite('runRight', { animationSpeed: 0.12, scale: 4 });
+    playerRunAnim.loop = true;
+    playerRunAnim.play();
+    playerRunAnim.visible = false; // start with idle visible
+
+    // NEW: create jump and fall animations
+    const playerJumpAnim = playerSpriteBuilder.createAnimatedSprite('jump', { animationSpeed: 0.0, scale: 4 }); // single-frame
+    playerJumpAnim.loop = false;
+    playerJumpAnim.visible = false;
+
+    const playerFallAnim = playerSpriteBuilder.createAnimatedSprite('fall', { animationSpeed: 0.10, scale: 4 });
+    playerFallAnim.loop = true;
+    playerFallAnim.visible = false;
 
     // player container (for anchor + easier collision)
     const player = new PIXI.Container();
     player.addChild(playerIdleAnim);
+    player.addChild(playerRunAnim);
+    player.addChild(playerJumpAnim); // added
+    player.addChild(playerFallAnim); // added
     playerIdleAnim.anchor.set(0.5, 0.5);
+    playerRunAnim.anchor.set(0.5, 0.5);
+    playerJumpAnim.anchor.set(0.5, 0.5);
+    playerFallAnim.anchor.set(0.5, 0.5);
     player.x = app.renderer.width * 0.5;
     player.y = app.renderer.height * 0.2;
     player.width = playerIdleAnim.width; // doesn't matter much; we use sprite bounds
@@ -126,9 +155,51 @@ PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.NEAREST;
             phys.onGround = false;
         }
 
-        // update player sprite orientation
-        if (phys.vx < 0) playerIdleAnim.scale.x = -Math.abs(playerIdleAnim.scale.x);
-        else if (phys.vx > 0) playerIdleAnim.scale.x = Math.abs(playerIdleAnim.scale.x);
+        // Choose animation: running when moving horizontally on ground, otherwise idle/jump/fall
+        const isRunning = Math.abs(phys.vx) > 1 && phys.onGround;
+
+        // helper to switch visible animation and ensure play state
+        function showAnim(anim) {
+            const all = [playerIdleAnim, playerRunAnim, playerJumpAnim, playerFallAnim];
+            for (const a of all) {
+                if (a === anim) {
+                    if (!a.visible) a.visible = true;
+                    if (!a.playing) a.play();
+                } else {
+                    if (a.visible) a.visible = false;
+                    if (a.playing) a.stop();
+                }
+            }
+        }
+
+        if (!phys.onGround) {
+            // airborne: jump while rising, fall while descending
+            if (phys.vy < 0) {
+                showAnim(playerJumpAnim);
+            } else {
+                showAnim(playerFallAnim);
+            }
+        } else {
+            if (isRunning) {
+                showAnim(playerRunAnim);
+            } else {
+                showAnim(playerIdleAnim);
+            }
+        }
+
+        // update player sprite orientation (flip all sprites)
+        const baseScaleX = Math.abs(playerRunAnim.scale.x) || Math.abs(playerIdleAnim.scale.x) || 1;
+        if (phys.vx < 0) {
+            playerRunAnim.scale.x = -baseScaleX;
+            playerIdleAnim.scale.x = -baseScaleX;
+            playerJumpAnim.scale.x = -baseScaleX;
+            playerFallAnim.scale.x = -baseScaleX;
+        } else if (phys.vx > 0) {
+            playerRunAnim.scale.x = baseScaleX;
+            playerIdleAnim.scale.x = baseScaleX;
+            playerJumpAnim.scale.x = baseScaleX;
+            playerFallAnim.scale.x = baseScaleX;
+        }
 
         // update camera (pass dt for smooth lerp)
         updateCamera(dt);

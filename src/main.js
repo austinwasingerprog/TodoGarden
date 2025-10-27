@@ -6,7 +6,10 @@ import { Background } from './background.js';
 // Constants
 const GRAVITY = 1200; // pixels / s^2
 const PLAYER_SPEED = 220; // pixels / s
-PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.NEAREST;
+// tolerance + thresholds to avoid animation jitter on small slopes
+const GROUND_TOLERANCE = 6;              // px tolerance to snap to ground
+const FALL_VELOCITY_THRESHOLD = 80;      // px/s downward to be considered "falling"
+const JUMP_VELOCITY_THRESHOLD = 80;      // px/s upward to be considered "jumping"
 
 (async () => {
     // Make the canvas resize to the window and use nearest-neighbor pixel rendering
@@ -91,15 +94,16 @@ PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.NEAREST;
     window.addEventListener('keydown', (e) => { keys[e.code] = true; });
     window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
-    // Create Terrain (it initially attached its container to stage; reparent into world)
+    // Create Terrain using the simplified Terrain signature.
+    // ampPixels controls hill height in pixels (use ~200px per request).
+    // wavelength controls hill width (500px default, wide hills).
     const terrain = new Terrain(app, {
-        tileSize: 16,
-        chunkTiles: 32,
-        viewDistanceChunks: 3,
+        wavelength: 1000,      // ~500px per hill
+        ampPixels: 100,       // hill amplitude in pixels (requested ~200px)
+        chunkWidthPx: 512,    // how wide each generated chunk is (pixels)
+        sampleStep: 16,       // sampling step in pixels (lower = smoother)
         seed: 42,
-        ampTiles: 50,       // bigger hills
-        noiseScale: 0.01,   // lower freq -> wider hills
-        samplesPerTile: 1,  // fewer samples -> smoother silhouette
+        viewDistanceChunks: 3,
     });
     terrain.updateForX(player.x);
     if (terrain.container.parent === app.stage) app.stage.removeChild(terrain.container);
@@ -171,10 +175,13 @@ PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.NEAREST;
         const groundY = terrain.groundY(playerBottomX);
         const playerHalfH = phys.height / 2;
         const playerBottomY = player.y + playerHalfH;
-        if (playerBottomY >= groundY) {
-            // hit ground -> snap to surface
+
+        // Snap to ground if within tolerance to avoid tiny gaps on slopes
+        if (playerBottomY >= groundY - GROUND_TOLERANCE) {
+            // hit (or very near) ground -> snap to surface
             player.y = groundY - playerHalfH;
-            phys.vy = 0;
+            // only kill downward velocity
+            if (phys.vy > 0) phys.vy = 0;
             phys.onGround = true;
         } else {
             phys.onGround = false;
@@ -198,10 +205,13 @@ PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.NEAREST;
         }
 
         if (!phys.onGround) {
-            // airborne: jump while rising, fall while descending
-            if (phys.vy < 0) {
+            // airborne: use velocity thresholds so tiny slope-driven vy doesn't trigger jump/fall
+            if (phys.vy < -JUMP_VELOCITY_THRESHOLD) {
                 showAnim(playerJumpAnim);
+            } else if (phys.vy > FALL_VELOCITY_THRESHOLD) {
+                showAnim(playerFallAnim);
             } else {
+                // still airborne but slow vertical movement -> prefer fall animation (or keep previous)
                 showAnim(playerFallAnim);
             }
         } else {

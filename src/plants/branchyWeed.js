@@ -138,6 +138,17 @@ export function createBranchyWeed(seedOrText, opts = {}) {
     c.rotation = (rng() - 0.5) * 0.12;
     c.scale.set(0.9 + rng() * 0.3);
 
+    // attach sway parameters so manager can animate the plant gently
+    // amp: rotation radians, freq: oscillation speed (hz-ish), phase: random offset, xAmp: horizontal pixel offset
+    c.sway = {
+        amp: 0.02 + rng() * 0.06,      // small rotation amplitude (radians)
+        freq: 1 + rng() * 0.9,      // speed
+        phase: rng() * Math.PI * 2,   // random phase
+        xAmp: 0.6 + rng() * 2.2       // small horizontal shift in px
+    };
+    // ensure rotation pivot is at the base/root (0,0) so it swings naturally
+    c.pivot.set(0, 0);
+
     return c;
 }
 

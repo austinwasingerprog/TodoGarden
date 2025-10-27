@@ -29,13 +29,25 @@ export class WeedManager {
     }
 
     initAddWeedButton() {
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.innerHTML = '+';
-        Object.assign(btn.style, {
+        // wrapper so we can add multiple small controls without overlapping
+        const wrap = document.createElement('div');
+        Object.assign(wrap.style, {
             position: 'fixed',
-            left: '18px',
-            top: '18px',
+            right: '18px',
+            bottom: '18px',
+            display: 'flex',
+            flexDirection: 'row',
+            gap: '8px',
+            alignItems: 'center',
+            zIndex: 9999,
+            pointerEvents: 'auto'
+        });
+
+        // Add button
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.innerHTML = '+';
+        Object.assign(addBtn.style, {
             width: '48px',
             height: '48px',
             borderRadius: '24px',
@@ -44,28 +56,79 @@ export class WeedManager {
             fontSize: '28px',
             border: 'none',
             cursor: 'pointer',
-            zIndex: 9999,
             boxShadow: '0 4px 10px rgba(0,0,0,0.3)',
         });
-        btn.title = 'Add Weed (opens dialog)';
-
-        // open dialog then immediately remove focus so SPACE/Enter won't retrigger the button
-        btn.addEventListener('click', () => {
+        addBtn.title = 'Add Weed (opens dialog)';
+        addBtn.addEventListener('click', () => {
             this.dialog.open();
-            // blur asynchronously to ensure click handling completes then remove focus
-            setTimeout(() => btn.blur(), 0);
+            setTimeout(() => addBtn.blur(), 0);
         });
-
-        // Prevent spacebar from activating while the button is focused (extra safety)
-        btn.addEventListener('keydown', (e) => {
-            if (e.code === 'Space' || e.key === ' ') {
-                e.preventDefault();
-                e.stopPropagation();
-            }
+        addBtn.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); }
         });
+        wrap.appendChild(addBtn);
+        this.addWeedButton = addBtn;
 
-        document.body.appendChild(btn);
-        this.addWeedButton = btn;
+        // Clear button (delete all weeds) with confirmation
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.innerHTML = '🗑';
+        Object.assign(clearBtn.style, {
+            width: '48px',
+            height: '48px',
+            borderRadius: '10px',
+            background: '#c94b4b',
+            color: '#fff',
+            fontSize: '20px',
+            border: 'none',
+            cursor: 'pointer',
+            boxShadow: '0 3px 8px rgba(0,0,0,0.25)',
+        });
+        clearBtn.title = 'Clear garden (remove all weeds & flowers)';
+        clearBtn.addEventListener('click', () => {
+            // confirm to avoid accidental wipe
+            const ok = window.confirm('Clear the garden? This will remove all weeds and flowers.');
+            if (!ok) return;
+            this.clearAllWeeds();
+            setTimeout(() => clearBtn.blur(), 0);
+        });
+        clearBtn.addEventListener('keydown', (e) => {
+            if (e.code === 'Space' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); }
+        });
+        wrap.appendChild(clearBtn);
+        this.clearGardenButton = clearBtn;
+
+        document.body.appendChild(wrap);
+        this._weedUiWrap = wrap;
+    }
+
+    // remove all weeds/flowers, clear particles, and persist empty state
+    clearAllWeeds() {
+        // destroy weed containers
+        for (const w of this.weeds) {
+            try {
+                if (w.container && w.container.parent) this.world.removeChild(w.container);
+                if (w.container && typeof w.container.destroy === 'function') w.container.destroy({ children: true, texture: false, baseTexture: false });
+            } catch (e) {}
+        }
+        this.weeds.length = 0;
+
+        // destroy water particles
+        for (const p of this._waters) {
+            try { if (p.gfx && p.gfx.parent) p.gfx.parent.removeChild(p.gfx); if (p.gfx) p.gfx.destroy(); } catch (e) {}
+        }
+        this._waters.length = 0;
+
+        // destroy splashes
+        for (const s of this._splashes) {
+            try { if (s.gfx && s.gfx.parent) s.gfx.parent.removeChild(s.gfx); if (s.gfx) s.gfx.destroy(); } catch (e) {}
+        }
+        this._splashes.length = 0;
+
+        // persist empty garden
+        try {
+            localStorage.removeItem(this.storageKey);
+        } catch (e) {}
     }
 
     // public api: called by Dialog (text string)
@@ -82,8 +145,9 @@ export class WeedManager {
         // spawn near player x, prefer ground if terrain available; allow record.x to override
         const px = this.player?.x ?? (this.app.renderer.width / 2);
         let spawnX = (Number.isFinite(record.x) ? record.x : px + (Math.random() * 200 - 100));
-        const groundY = this.terrain ? this.terrain.groundY(spawnX) + 20 : (this.player?.y ?? (this.app.renderer.height / 2)) + 50;
-        let spawnY = Number.isFinite(record.y) ? record.y : groundY - 8;
+        const groundY = this.terrain ? this.terrain.groundY(spawnX) : (this.player?.y ?? (this.app.renderer.height / 2)) + 80;
+        // place container at exact ground Y so plant root (y=0) sits on terrain
+        let spawnY = Number.isFinite(record.y) ? record.y : groundY;
 
         // simple non-overlap: n attempts to find a free spot (respect saved position but relocate if overlapping)
         let tries = 0;
@@ -99,7 +163,26 @@ export class WeedManager {
 
         // create procedural branchy weed (module) -- seed by text so same item is reproducible
         const plant = createBranchyWeed(record.text ?? 'weed', { baseLength: 16, leafSize: 8 });
+        // make sure plant draws upward from y=0 (root at 0) and add into outer container
+        plant.y = 0;
+        if (plant.pivot && typeof plant.pivot.set === 'function') plant.pivot.set(0, 0);
         c.addChild(plant);
+
+        // set outer container to sit exactly on the ground (plant root aligns to terrain)
+        c.y = spawnY;
+
+        // copy/mix-in sway params to the outer container so each weed gets its own unique animation
+        if (plant && plant.sway) {
+            // clone so different weeds don't share same object
+            c.sway = Object.assign({}, plant.sway);
+        } else {
+            // fallback sway if plant doesn't provide one
+            c.sway = { amp: 0.03, freq: 2, phase: Math.random() * Math.PI * 2, xAmp: 1.2 };
+        }
+        // add a per-weed random offset/phase so multiple weeds can be out of phase (opposite)
+        c.sway.offset = (Math.random() * Math.PI * 2);
+        // ensure pivot is at the base so rotation looks natural
+        if (c.pivot && typeof c.pivot.set === 'function') c.pivot.set(0, 0);
 
         // hidden label / thought bubble text (shown when player is near)
         const label = new PIXI.Text(text, {
@@ -111,7 +194,13 @@ export class WeedManager {
         });
         label.anchor = new PIXI.Point(0.5, 1);
         label.x = 0;
-        label.y = -26;
+        // position label just above the top of the plant using its bounds
+        try {
+            const b = plant.getLocalBounds();
+            label.y = -(b.y + b.height) - 8; // top of plant plus small gap
+        } catch (e) {
+            label.y = -26;
+        }
         label.visible = false;
 
         // simple background for readability
@@ -124,7 +213,7 @@ export class WeedManager {
         strike.visible = false;
 
         // checkmark (hidden until completed)
-        const check = new PIXI.Text('✔', { fontSize: 14, fill: 0x2e8b57 });
+        const check = new PIXI.Text('✔', { fontSize: 30, fill: 0x00FF00 });
         check.anchor.set(0.5, 0.5);
         check.visible = false;
         check.x = 18;
@@ -266,6 +355,9 @@ export class WeedManager {
         // dtSec optional for testing; otherwise compute from app.ticker
         const dt = (dtSec != null) ? dtSec : (this.app.ticker ? this.app.ticker.deltaMS / 1000 : 1 / 60);
 
+        // accumulate a global time for procedural animations
+        this._swayTime = (this._swayTime || 0) + dt;
+
         if (!this.player) return;
         const px = this.player.x, py = this.player.y;
         for (const w of this.weeds) {
@@ -283,6 +375,23 @@ export class WeedManager {
             } else if (!show && w.label.visible) {
                 w.label.visible = false;
                 w.bg.visible = false;
+            }
+
+            // apply subtle sway for alive weeds (not completed) using per-weed offset so each is independent
+            if (w.container && !w.completed && w.container.sway) {
+                const s = w.container.sway;
+                // combine global time with per-weed offset and phase so weeds are out-of-phase / sometimes opposite
+                const tval = (this._swayTime * s.freq) + (s.phase || 0) + (s.offset || 0);
+                const v = Math.sin(tval);
+                // increase sway slightly when weed is nearer (draw attention)
+                const nearFactor = Math.max(0, 1 - (d / 200));
+                const rot = v * s.amp * (1 + nearFactor * 0.6);
+                w.container.rotation = rot;
+                w.container.x = w.x + v * (s.xAmp || 0) * (1 + nearFactor * 0.4);
+            } else if (w.container) {
+                // reset transform for completed/unsupported plants
+                w.container.rotation = 0;
+                w.container.x = w.x;
             }
         }
 

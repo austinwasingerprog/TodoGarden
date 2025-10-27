@@ -111,10 +111,17 @@ export class Background {
         const w = this.app.renderer.width;
         const h = this.app.renderer.height;
 
-        // sky
-        this._sky.clear();
+        // fallback: keep renderer clear color same as sky so brief gaps never show black
+        try { this.app.renderer.backgroundColor = this.skyColor; } catch (e) { /* ignore if readonly */ }
+
+         // sky
+         this._sky.clear();
+        // draw slightly padded / integer-aligned rect to avoid sub-pixel gaps when resizing
+        const pad = 4;
+        const ww = Math.ceil(w) + pad * 2;
+        const hh = Math.ceil(h) + pad * 2;
         this._sky.beginFill(this.skyColor);
-        this._sky.drawRect(0, 0, w, h);
+        this._sky.drawRect(-pad, -pad, ww, hh);
         this._sky.endFill();
 
         // rebuild cloud groups and place them in the display list relative to mountain layers

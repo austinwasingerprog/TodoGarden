@@ -266,41 +266,58 @@ export class WeedManager {
         return this.player.y;
     }
 
+    // helper: compute player's visual "head" Y (top of sprite) for spawning water
+    _playerHeadY() {
+        if (!this.player) return 0;
+        let head = Infinity;
+        for (const c of this.player.children || []) {
+            try {
+                const b = (typeof c.getLocalBounds === 'function') ? c.getLocalBounds() : { y: 0 };
+                const top = this.player.y + c.y + (b.y ?? 0);
+                if (top < head) head = top;
+            } catch (e) { /* ignore */ }
+        }
+        if (!isFinite(head)) return this.player.y;
+        return head;
+    }
+
     // Start watering the nearest weed within range. This spawns a flood of water
     // from the player's "head" to the weed. Called by main on E press.
     startWatering() {
         if (!this.player) return;
         // find nearest non-completed weed within range
-        const px = this.player.x, py = this._playerFootY();
-        let best = null;
-        let bestD = Infinity;
-        for (const w of this.weeds) {
-            if (w.completed) continue;
-            const d = this._distance(px, py, w.x, w.y);
-            if (d < bestD) { bestD = d; best = w; }
-        }
-        if (!best || bestD > 200) return; // too far to water
+        const px = this.player.x;
+        const headY = this.player.y; // water starts from visual head
+        const py = this.player.y; // proximity checks use foot
+         let best = null;
+         let bestD = Infinity;
+         for (const w of this.weeds) {
+             if (w.completed) continue;
+             const d = this._distance(px, py, w.x, w.y);
+             if (d < bestD) { bestD = d; best = w; }
+         }
+         if (!best || bestD > 200) return; // too far to water
 
-        // spawn several water particles aimed at the weed
-        const particles = 18;
-        for (let i = 0; i < particles; i++) {
-            const start = { x: px + (Math.random() * 6 - 3), y: py - 36 + (Math.random() * 8 - 4) };
-            const target = { x: best.x + (Math.random() * 20 - 10), y: best.y - 4 + (Math.random() * 8 - 4) };
-            const dur = 0.3 + Math.random() * 0.35;
-
-            const g = new PIXI.Graphics();
-            g.beginFill(0x4EAFFC);
-            g.drawRect(-2, 0, 4, 12);
-            g.endFill();
-            g.x = start.x;
-            g.y = start.y;
-            g.rotation = 0.2 - Math.random() * 0.4;
-            g.alpha = 0.95;
-            // add to world (so it follows camera/transforms like other world objects)
-            this.world.addChild(g);
-
-            this._waters.push({ gfx: g, start, target, elapsed: 0, dur, weed: best });
-        }
+         // spawn several water particles aimed at the weed
+         const particles = 18;
+         for (let i = 0; i < particles; i++) {
+            const start = { x: px + (Math.random() * 6 - 3), y: headY + (Math.random() * 8 - 4) };
+             const target = { x: best.x + (Math.random() * 20 - 10), y: best.y - 4 + (Math.random() * 8 - 4) };
+             const dur = 0.3 + Math.random() * 0.35;
+ 
+             const g = new PIXI.Graphics();
+             g.beginFill(0x4EAFFC);
+             g.drawRect(-2, 0, 4, 12);
+             g.endFill();
+             g.x = start.x;
+             g.y = start.y;
+             g.rotation = 0.2 - Math.random() * 0.4;
+             g.alpha = 0.95;
+             // add to world (so it follows camera/transforms like other world objects)
+             this.world.addChild(g);
+ 
+             this._waters.push({ gfx: g, start, target, elapsed: 0, dur, weed: best });
+         }
     }
 
     // convert weed into a flower (visuals + mark completed)

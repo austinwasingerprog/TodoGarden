@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build-pages": "vite build --outDir docs"
+    "build-pages": "vite build --base ./ --outDir docs"
   },
   "keywords": [],
   "author": "",

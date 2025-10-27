@@ -1,6 +1,7 @@
 import * as PIXI from 'pixi.js';
 import { SpriteSheetBuilder } from './spriteFactory.js';
 import { Terrain } from './terrain.js';
+import { Background } from './background.js';
 
 // Constants
 const GRAVITY = 1200; // pixels / s^2
@@ -8,20 +9,22 @@ const PLAYER_SPEED = 220; // pixels / s
 PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.NEAREST;
 
 (async () => {
-    const app = new PIXI.Application({ resolution: 1, autoDensity: false, width: 800, height: 600 });
+    // Make the canvas resize to the window and use nearest-neighbor pixel rendering
+    const app = new PIXI.Application({ resizeTo: window, resolution: 1, autoDensity: false });
     app.view.style.imageRendering = 'pixelated';
     document.body.appendChild(app.view);
 
     // --- Background (bright sky) and world container ---
-    const background = new PIXI.Graphics();
-    background.beginFill(0x87CEFF); // light/bright sky blue
-    background.drawRect(0, 0, app.renderer.width, app.renderer.height);
-    background.endFill();
-    app.stage.addChild(background);
+    const background = new Background(app);
+    // add background behind everything (index 0)
+    app.stage.addChildAt(background.container, 0);
+    background.resize();
 
     // world container will be camera-translated; background stays fixed
     const world = new PIXI.Container();
     app.stage.addChild(world);
+    // ensure world is above the background
+    app.stage.setChildIndex(world, app.stage.children.length - 1);
 
     const spritePath = 'src/resources/adventurer-v1.5-sheet.png';
     const frameWidth = 50;
@@ -89,10 +92,29 @@ PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.NEAREST;
     window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
     // Create Terrain (it initially attached its container to stage; reparent into world)
-    const terrain = new Terrain(app, { tileSize: 16, chunkTiles: 32, viewDistanceChunks: 3, seed: 42, ampTiles: 6, noiseScale: 0.04 });
+    const terrain = new Terrain(app, {
+        tileSize: 16,
+        chunkTiles: 32,
+        viewDistanceChunks: 3,
+        seed: 42,
+        ampTiles: 50,       // bigger hills
+        noiseScale: 0.01,   // lower freq -> wider hills
+        samplesPerTile: 1,  // fewer samples -> smoother silhouette
+    });
     terrain.updateForX(player.x);
     if (terrain.container.parent === app.stage) app.stage.removeChild(terrain.container);
     world.addChildAt(terrain.container, 0); // keep terrain behind player in world
+
+    // handle resize: redraw background and rebuild terrain chunks to match new height
+    window.addEventListener('resize', () => {
+        background.resize();
+        // rebuild terrain chunks so height fits new renderer height
+        for (const g of terrain.chunks.values()) {
+            g.destroy({ children: true, texture: false, baseTexture: false });
+        }
+        terrain.chunks.clear();
+        terrain.updateForX(player.x);
+    });
 
     // Camera helper (smoothed / lerped)
     const camera = { x: 0, y: 0, smooth: 0.12 }; // increase smooth -> slower camera
@@ -113,6 +135,9 @@ PIXI.settings.SCALE_MODE = PIXI.SCALE_MODES.NEAREST;
         // translate the world container only
         world.x = camera.x;
         world.y = camera.y;
+
+        // update parallax background using the same camera translation
+        background.update(camera.x);
     }
 
     // Main loop

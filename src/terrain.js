@@ -1,106 +1,102 @@
 import * as PIXI from 'pixi.js';
-const { Graphics } = PIXI;
+const { Graphics, Container } = PIXI;
 
+/**
+ * Simple chunked terrain producing wide smooth hills.
+ * - height function is a centered sine wave (plus tiny jitter) so visual hills are wide (~wavelength px).
+ * - collision uses same height function (groundY).
+ * - chunks are generated as a single polygon per chunk.
+ */
 export class Terrain {
     constructor(app, opts = {}) {
         this.app = app;
-        this.tileSize = opts.tileSize ?? 16;
-        this.chunkTiles = opts.chunkTiles ?? 32; // columns per chunk
-        this.seed = opts.seed ?? 12345;
-        this.viewDistanceChunks = opts.viewDistanceChunks ?? 3; // how many chunks each side to keep
-        this.chunks = new Map(); // chunkIndex -> Graphics
-        this.container = new PIXI.Container();
-        // NOTE: do not auto-add to app.stage here — caller may want to manage layering
-        // this.app.stage.addChild(this.container);
+        this.container = new Container();
 
-        // height params
-        this.baseHeightPct = opts.baseHeightPct ?? 0.6; // fraction of screen height
-        this.noiseScale = opts.noiseScale ?? 0.05;
-        this.ampTiles = opts.ampTiles ?? 6; // amplitude in tiles
+        // visual / collision parameters
+        this.baseHeightPct = opts.baseHeightPct ?? 0.6;    // base ground height as fraction of screen
+        this.tileSize = opts.tileSize ?? 16;               // kept for compatibility (not required)
+        this.ampTiles = opts.ampTiles ?? 6;                // amplitude in tiles (converted below)
+        this.ampPixels = (opts.ampPixels ?? (this.ampTiles * this.tileSize));
+        this.wavelength = opts.wavelength ?? 500;          // desired width of a hill in pixels (default ~500)
+        this.jitter = opts.jitter ?? 6;                    // small high-frequency jitter in pixels (visual only)
+
+        // chunking
+        this.chunkWidthPx = opts.chunkWidthPx ?? (this.tileSize * (opts.chunkTiles ?? 32));
+        this.sampleStep = Math.max(8, opts.sampleStep ?? 16); // smaller => more points; 16 is fine for wide hills
+
+        this.seed = opts.seed ?? 0;
+        this.viewDistanceChunks = opts.viewDistanceChunks ?? 3;
+
+        this.chunks = new Map();
     }
 
-    // deterministic pseudo-random from integer x
-    _hashNoise(i) {
-        let n = i + (this.seed * 374761393);
-        n = (n << 13) ^ n;
-        return 1.0 - ((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff) / 1073741824.0;
+    // deterministic small pseudo-random jitter from x
+    _jitterFor(x) {
+        const n = Math.floor(x) + (this.seed * 374761393);
+        let v = (n << 13) ^ n;
+        v = (1.0 - ((v * (v * v * 15731 + 789221) + 1376312589) & 0x7fffffff) / 1073741824.0);
+        return v * this.jitter;
     }
 
-    // smooth interpolated noise value in [-1,1]
-    _smoothNoise(x) {
-        const ix = Math.floor(x);
-        const fx = x - ix;
-        const v1 = this._hashNoise(ix);
-        const v2 = this._hashNoise(ix + 1);
-        // smoothstep/cosine interpolation
-        const t = (1 - Math.cos(fx * Math.PI)) * 0.5;
-        return v1 * (1 - t) + v2 * t;
+    // height at world X in pixels (used by renderer and collision)
+    heightForX(worldX) {
+        const h = this.app.renderer.height;
+        const baseY = h * this.baseHeightPct;
+
+        // low-frequency sine for wide hills
+        const phase = (worldX + this.seed) * (2 * Math.PI) / this.wavelength;
+        const sine = Math.sin(phase);
+
+        // tiny high-frequency jitter for visual texture (kept small)
+        const jitter = this._jitterFor(Math.floor(worldX * 0.1)) * 0.5;
+
+        return baseY + sine * this.ampPixels + jitter;
     }
 
-    // height in pixels for a given column index (integer column)
-    heightForColumn(col) {
-        const screenH = this.app.renderer.height;
-        const baseY = screenH * this.baseHeightPct;
-        const noise = this._smoothNoise(col * this.noiseScale);
-        const ampPixels = this.ampTiles * this.tileSize;
-        return baseY + noise * ampPixels;
-    }
-
-    // worldX in pixels -> ground Y in pixels
+    // collision sampling API (worldX in pixels)
     groundY(worldX) {
-        const col = Math.floor(worldX / this.tileSize);
-        return this.heightForColumn(col);
+        return this.heightForX(worldX);
     }
 
-    // generate a chunk at chunkIndex (chunkIndex can be negative)
+    // generate a single chunk polygon and cache it
     generateChunk(chunkIndex) {
         if (this.chunks.has(chunkIndex)) return;
         const g = new Graphics();
         g.zIndex = 0;
 
-        const startCol = chunkIndex * this.chunkTiles;
+        const startX = chunkIndex * this.chunkWidthPx;
+        const endX = startX + this.chunkWidthPx;
+
+        // build samples from start to end (include endpoints)
         const pts = [];
-        for (let i = 0; i <= this.chunkTiles; i++) {
-            const col = startCol + i;
-            const x = col * this.tileSize;
-            const y = this.heightForColumn(col);
-            pts.push({ x, y, col });
+        for (let x = startX; x <= endX; x += this.sampleStep) {
+            const y = this.heightForX(x);
+            pts.push({ x, y });
+        }
+        // ensure final point is included
+        if (pts.length === 0 || pts[pts.length - 1].x < endX) {
+            pts.push({ x: endX, y: this.heightForX(endX) });
         }
 
-        // Build polygon for top surface -> fill below to bottom of screen
-        const baseColor = 0x4e944f;
-        g.beginFill(baseColor);
+        // main fill
+        g.beginFill(0x4e944f);
         g.moveTo(pts[0].x, pts[0].y);
-        for (let p of pts) g.lineTo(p.x, p.y);
-        // down to bottom-right then bottom-left
-        g.lineTo(pts[pts.length - 1].x, this.app.renderer.height + 100);
-        g.lineTo(pts[0].x, this.app.renderer.height + 100);
+        for (const p of pts) g.lineTo(p.x, p.y);
+        g.lineTo(endX, this.app.renderer.height + 200);
+        g.lineTo(startX, this.app.renderer.height + 200);
         g.closePath();
         g.endFill();
 
-        // Add per-column variation (vertical strips with slightly different greens)
-        for (let i = 0; i < this.chunkTiles; i++) {
-            const col = startCol + i;
-            const x = col * this.tileSize;
-            const y = this.heightForColumn(col);
-            const shade = this._smoothNoise(col * 0.35);
-            const color = shade > 0 ? 0x5da75b : 0x3b6f3b; // light/dark variation
-            g.beginFill(color);
-            // draw a strip from the top down a few tiles to create visible texture
-            g.drawRect(x, y, this.tileSize, this.tileSize * (2 + Math.floor((shade + 1) * 1.5)));
-            g.endFill();
-
-            // small lighter grass fringe along the very top to accent movement
-            const fringeH = 3;
-            const grassColor = 0xa6ff9a;
-            g.beginFill(grassColor);
-            g.drawRect(x + 1, y - fringeH, this.tileSize - 2, fringeH);
-            g.endFill();
+        // subtle lighter ridge band along the top (computed from same pts)
+        g.beginFill(0xffffff, 0.08);
+        const bandOffset = Math.min(24, this.ampPixels * 0.18);
+        for (let i = 0; i < pts.length - 1; i++) {
+            const a = pts[i], b = pts[i + 1];
+            const mx = (a.x + b.x) * 0.5;
+            const my = (a.y + b.y) * 0.5 + bandOffset * 0.25;
+            g.moveTo(mx - this.sampleStep * 0.4, my);
+            g.lineTo(mx + this.sampleStep * 0.4, my);
         }
-
-        // Optional deeper fill for solidity (darker below)
-        g.beginFill(0x355c35);
-        g.drawRect(pts[0].x, pts[0].y + this.tileSize * 3, this.chunkTiles * this.tileSize, this.app.renderer.height);
         g.endFill();
 
         this.container.addChild(g);
@@ -109,7 +105,7 @@ export class Terrain {
 
     // remove distant chunks
     pruneChunks(centerChunk) {
-        for (let key of Array.from(this.chunks.keys())) {
+        for (const key of Array.from(this.chunks.keys())) {
             const idx = Number(key);
             if (Math.abs(idx - centerChunk) > this.viewDistanceChunks) {
                 const g = this.chunks.get(idx);
@@ -121,7 +117,7 @@ export class Terrain {
 
     // ensure chunks around playerX exist
     updateForX(playerX) {
-        const chunkIndex = Math.floor(playerX / (this.tileSize * this.chunkTiles));
+        const chunkIndex = Math.floor(playerX / this.chunkWidthPx);
         for (let i = -this.viewDistanceChunks; i <= this.viewDistanceChunks; i++) {
             this.generateChunk(chunkIndex + i);
         }

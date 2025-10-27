@@ -5,6 +5,7 @@ import { Background } from './background.js';
 import { WeedManager } from './weedManager.js';
 import { Dialog } from './ui/dialog.js';
 import { Controls } from './ui/controls.js';
+import spriteSheetUrl from './resources/adventurer-v1.5-sheet.png';
 
 // Constants
 const GRAVITY = 1200; // pixels / s^2
@@ -30,7 +31,7 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
     const controls = new Controls(app, { text: 'press [S] to plant a weed (to-do item) | press [E] to water (complete) a weed' });
     app.stage.addChild(controls.container);
 
-    const spritePath = 'src/resources/adventurer-v1.5-sheet.png';
+    const spritePath = spriteSheetUrl;
     const frameWidth = 50;
     const frameHeight = 37;
 

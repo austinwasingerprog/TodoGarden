@@ -27,14 +27,6 @@ jobs:
         with:
           node-version: 20.19.0
 
-      # Configure npm auth for private packages (requires secret NPM_TOKEN)
-      - name: Configure npm auth
-        if: ${{ secrets.NPM_TOKEN != '' }}
-        run: |
-          echo "//registry.npmjs.org/:_authToken=\${NPM_TOKEN}" > ~/.npmrc
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-
       - name: Install npm dependencies and build
         run: |
           npm ci

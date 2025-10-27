@@ -19,12 +19,9 @@ export class Background {
             { parallax: 0.75, color: 0x3b6fae, peaks: 10, verticalBias: 0.5 },
         ];
 
-        // sky, clouds, then mountain layers
+        // sky then mountain layers (cloud groups will be inserted after layers so we can place them between layers)
         this._sky = new Graphics();
         this.container.addChild(this._sky);
-
-        this.cloudsContainer = new Container();
-        this.container.addChild(this.cloudsContainer);
 
         this.layers = [];
         for (const cfg of this.mountainConfigs) {
@@ -52,9 +49,16 @@ export class Background {
             });
         }
 
-        // cloud data
-        this._clouds = [];
-        this._cloudCount = opts.cloudCount ?? 8;
+        // cloud groups: far (behind mountains), mid (between mid & close mountains), front (in front of all)
+        this._cloudGroups = [
+            { name: 'far', container: new Container(), parallax: 0.12, count: opts.cloudFarCount ?? 10, scaleMin: 0.6, scaleMax: 1.0, alpha: 0.72, insertAfterLayer: -1 }, // behind all (insert after sky)
+            { name: 'mid', container: new Container(), parallax: 0.28, count: opts.cloudMidCount ?? 12, scaleMin: 0.9, scaleMax: 1.6, alpha: 0.62, insertAfterLayer: 1 }, // between layer1 and layer2
+            { name: 'front', container: new Container(), parallax: 0.55, count: opts.cloudFrontCount ?? 8, scaleMin: 1.4, scaleMax: 2.4, alpha: 0.48, insertAfterLayer: null } // in front of all mountains
+        ];
+        // each group's internal array of clouds (g, baseX, baseY)
+        for (const g of this._cloudGroups) {
+            g._items = [];
+        }
     }
 
     // deterministic-ish helper for peak variation (keeps visuals stable across redraws)
@@ -62,14 +66,44 @@ export class Background {
         return Math.sin(x * 0.001 + seed) * 0.5 + 0.5;
     }
 
-    // draw a simple cloud composed of 3 overlapping circles
-    _drawCloud(g, scale = 1) {
+    // draw a simple cloud composed of multiple overlapping circles
+    _drawCloud(g, scale = 1, opts = {}) {
+        // opts: { seed, minCircles, maxCircles }
         g.clear();
-        g.beginFill(0xffffff);
-        g.drawCircle(0, 0, 18 * scale);
-        g.drawCircle(20 * scale, -6 * scale, 14 * scale);
-        g.drawCircle(36 * scale, 0, 12 * scale);
+        // simple local RNG if seed provided for nice repeatability when resizing
+        let rnd = Math.random;
+        if (Number.isFinite(opts.seed)) {
+            let t = opts.seed >>> 0;
+            rnd = () => { t += 0x6D2B79F5; let r = Math.imul(t ^ (t >>> 15), 1 | t); r = ((r >>> 0) / 4294967295); return r; };
+        }
+
+        const minC = opts.minCircles ?? 3;
+        const maxC = opts.maxCircles ?? 6;
+        const circles = minC + Math.floor(rnd() * (maxC - minC + 1));
+
+        // draw several softly-alpha'd circles to create fluffy clouds.
+        // use SCREEN blend mode so overlapping clouds don't darken (they stay soft/light).
+        for (let i = 0; i < circles; i++) {
+            // bias first circle toward origin
+            const bias = i === 0 ? 0 : (10 + rnd() * 36);
+            const cx = (i === 0 ? 0 : bias + (rnd() * 16 - 8)) * scale;
+            const cy = (i === 0 ? 0 : (rnd() * 14 - 7)) * scale;
+            const baseR = 12 + rnd() * 26;
+            const r = baseR * scale * (1 - i * 0.06);
+            const a = 0.28 + rnd() * 0.22; // softer per-circle alpha
+            g.beginFill(0xffffff, a);
+            g.drawCircle(cx, cy, r);
+            g.endFill();
+        }
+
+        // soft outer shape for silhouette (low alpha ellipse)
+        g.beginFill(0xffffff, 0.06 + rnd() * 0.06);
+        g.drawEllipse(20 * scale, 0, 44 * scale, 18 * scale);
         g.endFill();
+
+        // slight random rotation for variety (set on the graphic rather than here if desired)
+        g.rotation = (rnd() * 6 - 3) * (Math.PI / 180);
+        g.blendMode = PIXI.BLEND_MODES.SCREEN;
     }
 
     // redraw everything for current renderer size
@@ -83,22 +117,48 @@ export class Background {
         this._sky.drawRect(0, 0, w, h);
         this._sky.endFill();
 
-        // rebuild clouds (positions across a wider span)
-        this.cloudsContainer.removeChildren();
-        this._clouds = [];
-        for (let i = 0; i < this._cloudCount; i++) {
-            const g = new Graphics();
-            const scale = 0.6 + (i % 3) * 0.25;
-            this._drawCloud(g, scale);
-            // spread across -w .. 2w so parallax has content when camera moves
-            const baseX = -w + (i / this._cloudCount) * (w * 3) + (Math.cos(i * 1.3) * 40);
-            const baseY = Math.max(40, h * (0.08 + (i % 3) * 0.06) + Math.sin(i * 0.7) * 30);
-            g.x = baseX;
-            g.y = baseY;
-            g.alpha = 0.95;
-            this.cloudsContainer.addChild(g);
-            // store baseX and parallax factor for update
-            this._clouds.push({ g, baseX, baseY, parallax: 0.25 + (i % 3) * 0.08 });
+        // rebuild cloud groups and place them in the display list relative to mountain layers
+        // remove existing cloud children and re-insert at desired depths
+        for (const g of this._cloudGroups) {
+            // clear previous items and container
+            g.container.removeChildren();
+            g._items.length = 0;
+        }
+
+        // insert cloud containers at the correct indices:
+        // current children order: [sky, layer0, layer1, layer2, ...]
+        // insertAfterLayer: -1 -> after sky (index 1), 1 -> after layer1 (index 3), null -> append (front)
+        for (const group of this._cloudGroups) {
+            if (group.insertAfterLayer === -1) {
+                this.container.addChildAt(group.container, 1);
+            } else if (Number.isInteger(group.insertAfterLayer)) {
+                // compute index: sky is 0, layers start at 1; insert after layer N => index = 1 + N + 1
+                const insertIndex = Math.min(this.container.children.length, 2 + group.insertAfterLayer);
+                this.container.addChildAt(group.container, insertIndex);
+            } else {
+                this.container.addChild(group.container); // front
+            }
+        }
+
+        // populate each group with clouds spanning -w .. 2w for safe parallax coverage
+        for (const group of this._cloudGroups) {
+            const span = w * 3;
+            for (let i = 0; i < group.count; i++) {
+                const g = new Graphics();
+                const t = i / Math.max(1, group.count - 1);
+                const scale = group.scaleMin + Math.random() * (group.scaleMax - group.scaleMin);
+                // give each cloud a small seed so its internal layout is stable on redraw
+                const seed = Math.floor((i + 1) * (group.parallax * 1000 + 13));
+                this._drawCloud(g, scale, { seed, minCircles: 3, maxCircles: 7 });
+                const baseX = -w + t * span + (Math.cos(i * 1.3 + group.parallax * 10) * 40 * (0.5 + Math.random()));
+                const baseY = Math.max(30, h * (0.06 + Math.random() * 0.24) + Math.sin(i * 0.7 + group.parallax * 7) * 28);
+                g.x = baseX;
+                g.y = baseY;
+                // let per-circle alpha control final density; still allow group alpha for global control
+                g.alpha = group.alpha;
+                group.container.addChild(g);
+                group._items.push({ g, baseX, baseY, parallax: group.parallax });
+            }
         }
 
         // draw tiled mountains (two tiles per layer so we can wrap infinitely)
@@ -173,12 +233,15 @@ export class Background {
 
     // Update parallax based on camera/world translation (cameraX is world container x)
     update(cameraX = 0) {
-        // clouds: move opposite cameraX by small factor
-        for (const c of this._clouds) {
-            // clouds should move opposite the camera/player so they appear in the background
-            c.g.x = c.baseX - cameraX * c.parallax;
-            c.g.y = c.baseY + Math.sin((cameraX + c.baseX) * 0.0008) * 6;
-         }
+        // clouds: move with a layerOffset consistent with mountains (layerOffset = -cameraX * parallax)
+        for (const group of this._cloudGroups) {
+            const layerOffset = -cameraX * group.parallax;
+            for (const c of group._items) {
+                // move clouds opposite the camera; subtracting keeps direction consistent with mountains
+                c.g.x = Math.round(c.baseX - layerOffset);
+                c.g.y = c.baseY + Math.sin((cameraX + c.baseX) * 0.0008) * 6;
+            }
+        }
 
          // mountains: tile each layer and offset by parallax. Use modulo to wrap tile positions.
          for (const layer of this.layers) {

@@ -5,7 +5,7 @@ import { Background } from './background.js';
 import { WeedManager } from './weedManager.js';
 import { Dialog } from './ui/dialog.js';
 import { Controls } from './ui/controls.js';
-import spriteSheetUrl from './resources/adventurer-v1.5-sheet.png';
+import spriteSheetUrl from './resources/adventurer-v1.5-Sheet.png';
 
 // Constants
 const GRAVITY = 1200; // pixels / s^2

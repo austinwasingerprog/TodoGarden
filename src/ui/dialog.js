@@ -1,6 +1,5 @@
 import Swal from 'sweetalert2';
 
-// Dialog uses SweetAlert2 but does NOT import WeedManager (avoid circular import).
 // onAdd: function(text) => void
 export class Dialog {
     constructor(onAdd) {

@@ -20,22 +20,81 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
     app.view.style.imageRendering = 'pixelated';
     document.body.appendChild(app.view);
 
+    // allow children drawn by zIndex so UI can sit above world/terrain
+    app.stage.sortableChildren = true;
+
     const background = new Background(app);
     app.stage.addChildAt(background.container, 0);
     background.resize();
+
+    // central resize handler: main owns layout lifecycle so controls get repositioned correctly
+    // controls created later (after world) so they render on top
+    let controls = null;
+    const onResize = () => {
+        background.resize();
+        try { if (controls) controls.resize(); } catch (e) { /* ignore */ }
+    };
+    window.addEventListener('resize', onResize);
+    onResize();
+
+    // detect maximize / restore and handle minimize (visibility) and focus changes.
+    // There is no direct maximize/minimize event, so combine resize + visibility/focus heuristics.
+    let _lastOuterW = window.outerWidth, _lastOuterH = window.outerHeight;
+    let _lastInnerW = window.innerWidth, _lastInnerH = window.innerHeight;
+    function _handleWindowState(e) {
+        // ensure we run after the browser has a chance to resize canvas; try RAF then a short timeout fallback
+        const syncAndLayout = () => {
+            try {
+                // if inner size changed, force renderer resize so controls/background read updated dims
+                if (window.innerWidth !== _lastInnerW || window.innerHeight !== _lastInnerH) {
+                    try { app.renderer.resize(window.innerWidth, window.innerHeight); } catch (resizeErr) { /* ignore */ }
+                    _lastInnerW = window.innerWidth; _lastInnerH = window.innerHeight;
+                }
+            } finally {
+                // central layout update
+                onResize();
+            }
+        };
+
+        requestAnimationFrame(() => {
+            syncAndLayout();
+            // fallback in case renderer updates slightly later (covers maximize timing quirks)
+            setTimeout(syncAndLayout, 120);
+        });
+
+        // update outer size tracking
+        _lastOuterW = window.outerWidth; _lastOuterH = window.outerHeight;
+    }
+
+    // visibilitychange handles minimize / tab hidden; focus/blur cover other cases
+    document.addEventListener('visibilitychange', _handleWindowState, { passive: true });
+    window.addEventListener('focus', _handleWindowState, { passive: true });
+    window.addEventListener('blur', _handleWindowState, { passive: true });
+    // keep resize routed through the same handler (already added above)
+    // ensure we also respond to fullscreen changes
+    document.addEventListener('fullscreenchange', _handleWindowState);
 
     const world = new PIXI.Container();
     app.stage.addChild(world);
     app.stage.setChildIndex(world, app.stage.children.length - 1);
 
-    const controls = new Controls(app, { text: 'press [S] to plant a weed (to-do item) | press [E] to water (complete) a weed' });
+    // create controls AFTER world so they sit above terrain/world visuals
+    controls = new Controls(app, { text: 'press [S] to plant a weed (to-do item) | press [E] to water (complete) a weed' });
     app.stage.addChild(controls.container);
+    // ensure initial layout
+    try { controls.resize(); } catch (e) {}
 
-    const spritePath = spriteSheetUrl;
-    const frameWidth = 50;
-    const frameHeight = 37;
+    // ticker-based renderer-size watcher: robustly detect maximize/restore timing and call onResize
+    let _lastRendererW = app.renderer.width, _lastRendererH = app.renderer.height;
+    app.ticker.add(() => {
+        const rw = app.renderer.width, rh = app.renderer.height;
+        if (rw !== _lastRendererW || rh !== _lastRendererH) {
+            _lastRendererW = rw; _lastRendererH = rh;
+            onResize();
+        }
+    });
 
-    const playerSpriteBuilder = new SpriteSheetBuilder(spritePath, frameWidth, frameHeight);
+    const playerSpriteBuilder = new SpriteSheetBuilder(spriteSheetUrl, 50, 37);
     playerSpriteBuilder.addGridFrames(0, 0, 3, 0, 'idleFrame', 'idle');
     playerSpriteBuilder.addGridFrames(1, 1, 6, 1, 'runFrame', 'runRight');
     playerSpriteBuilder.addGridFrames(2, 2, 2, 2, 'jumpFrame', 'jump');
@@ -80,8 +139,8 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
         vx: 0,
         vy: 0,
         onGround: false,
-        width: frameWidth * 4,
-        height: frameHeight * 4,
+        width: 50 * 4,
+        height: 37 * 4,
     };
 
     // position each AnimatedSprite so its visual bottom sits at container.y + halfHeight
@@ -114,16 +173,14 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
     const weedManager = new WeedManager(app, world, player, terrain);
 
     window.addEventListener('resize', () => {
-        background.resize();
+        // central resize: keep visuals, UI and terrain visuals in sync
+        onResize(); // updates background + controls
         for (const g of terrain.chunks.values()) {
             g.destroy({ children: true, texture: false, baseTexture: false });
         }
         terrain.chunks.clear();
-        // regen chunks for the new viewport (visual only). Terrain world coords remain fixed,
-        // so we only need to re-create visuals for the new viewport size.
+        // regen chunks for the new viewport (visual only)
         terrain.updateForX(player.x);
-        // Do NOT change world coordinates (player.y / weed.y). Keeping world coordinates fixed
-        // preserves absolute positions regardless of devtools / resize.
     });
 
     const camera = { x: 0, y: 0, smooth: 0.12 };

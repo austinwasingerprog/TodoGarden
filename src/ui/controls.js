@@ -3,6 +3,10 @@ import * as PIXI from 'pixi.js';
 export class Controls {
     constructor(app, opts = {}) {
         this.app = app;
+        // snap renderer to integer pixels to avoid sub-pixel blurring
+        try { this.app.renderer.roundPixels = true; } catch (e) { /* ignore */ }
+        // ensure high-res text textures on HiDPI displays
+        this.dpi = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
         this.container = new PIXI.Container();
         this.container.zIndex = 10000;
         this.container.interactive = false;
@@ -42,8 +46,7 @@ export class Controls {
         // add to stage (fixed to screen)
         this.app.stage.addChild(this.container);
 
-        window.addEventListener('resize', this._resizeHandler);
-        // initial layout
+        // initial layout (resize driven by main so we don't duplicate listeners)
         this.resize();
     }
 
@@ -62,6 +65,9 @@ export class Controls {
             bg.interactive = false;
             // text
             const txt = new PIXI.Text(p, this.style);
+            // render text at device pixel resolution and snap to integer pixels
+            try { txt.resolution = this.dpi; } catch (e) { /* ignore */ }
+            txt.roundPixels = true;
             txt.anchor.set(0.5, 0.5);
             txt.interactive = false;
 
@@ -125,7 +131,7 @@ export class Controls {
     }
 
     destroy() {
-        window.removeEventListener('resize', this._resizeHandler);
+        // resize listener removed — main owns resize lifecycle now
         if (this.container.parent) this.container.parent.removeChild(this.container);
         // destroy item graphics & texts
         for (const it of this._items) {

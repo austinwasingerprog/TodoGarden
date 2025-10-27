@@ -6,6 +6,7 @@ import { Background } from './background.js';
 // Constants
 const GRAVITY = 1200; // pixels / s^2
 const PLAYER_SPEED = 220; // pixels / s
+const SPRINT_MULTIPLIER = 2; // sprint speed = PLAYER_SPEED * SPRINT_MULTIPLIER
 // tolerance + thresholds to avoid animation jitter on small slopes
 const GROUND_TOLERANCE = 6;              // px tolerance to snap to ground
 const FALL_VELOCITY_THRESHOLD = 80;      // px/s downward to be considered "falling"
@@ -152,7 +153,12 @@ const JUMP_VELOCITY_THRESHOLD = 80;      // px/s upward to be considered "jumpin
         let move = 0;
         if (keys['ArrowLeft'] || keys['KeyA']) move -= 1;
         if (keys['ArrowRight'] || keys['KeyD']) move += 1;
-        phys.vx = move * PLAYER_SPEED;
+
+        // Sprint detection (Shift)
+        const sprint = Boolean(keys['ShiftLeft'] || keys['ShiftRight'] || keys['Shift']);
+        const speedMul = sprint ? SPRINT_MULTIPLIER : 1;
+
+        phys.vx = move * PLAYER_SPEED * speedMul;
 
         // Jump
         if ((keys['Space'] || keys['KeyW'] || keys['ArrowUp']) && phys.onGround) {
@@ -220,6 +226,11 @@ const JUMP_VELOCITY_THRESHOLD = 80;      // px/s upward to be considered "jumpin
             } else {
                 showAnim(playerIdleAnim);
             }
+        }
+
+        // Adjust run animation playback speed when sprinting
+        if (playerRunAnim) {
+            playerRunAnim.animationSpeed = sprint ? 0.22 : 0.12;
         }
 
         // update player sprite orientation (flip all sprites)

@@ -153,7 +153,8 @@ export class WeedManager {
         let tries = 0;
         while (this.weeds.some(w => this._distance(w.x, w.y, spawnX, spawnY) < 64) && tries++ < 40) {
             spawnX += (Math.random() * 200 - 100);
-            if (this.terrain) spawnY = this.terrain.groundY(spawnX) - 8;
+            // recompute ground Y for the new X (consistent: no ad-hoc offsets here)
+            if (this.terrain) spawnY = this.terrain.groundY(spawnX);
         }
 
         // build a small PIXI container for the weed
@@ -254,12 +255,23 @@ export class WeedManager {
         return Math.sqrt(dx * dx + dy * dy);
     }
 
+    // helper: compute player's visual "foot" Y (bottom of sprite) for interactions
+    _playerFootY() {
+        if (!this.player) return 0;
+        for (const c of this.player.children || []) {
+            if (c && c.anchor && typeof c.anchor.y === 'number' && c.anchor.y === 1 && typeof c.y === 'number') {
+                return this.player.y + c.y;
+            }
+        }
+        return this.player.y;
+    }
+
     // Start watering the nearest weed within range. This spawns a flood of water
     // from the player's "head" to the weed. Called by main on E press.
     startWatering() {
         if (!this.player) return;
         // find nearest non-completed weed within range
-        const px = this.player.x, py = this.player.y;
+        const px = this.player.x, py = this._playerFootY();
         let best = null;
         let bestD = Infinity;
         for (const w of this.weeds) {
@@ -359,7 +371,7 @@ export class WeedManager {
         this._swayTime = (this._swayTime || 0) + dt;
 
         if (!this.player) return;
-        const px = this.player.x, py = this.player.y;
+        const px = this.player.x, py = this._playerFootY();
         for (const w of this.weeds) {
             const d = this._distance(px, py, w.x, w.y);
             const show = d < 110; // proximity threshold
@@ -451,7 +463,8 @@ export class WeedManager {
             const out = this.weeds.map(w => ({
                 text: w.text,
                 x: w.x,
-                y: w.y,
+                // don't persist absolute y (depends on renderer height/terrain).
+                // y will be recomputed on load via terrain.groundY(x) to avoid floating issues.
                 completed: !!w.completed,
                 hits: Number(w.hits || 0)
             }));
@@ -471,10 +484,11 @@ export class WeedManager {
             if (!Array.isArray(arr)) return;
             for (const r of arr) {
                 // spawn with saved data
+                // Note: do NOT use saved absolute y — recompute from terrain so plants sit on ground
                 this._spawnWeed({
                     text: r.text,
                     x: Number.isFinite(r.x) ? r.x : null,
-                    y: Number.isFinite(r.y) ? r.y : null,
+                    y: null, // force _spawnWeed to compute groundY(x) (avoids floating after resize)
                     completed: !!r.completed,
                     hits: Number.isFinite(r.hits) ? r.hits : 0
                 });
@@ -482,6 +496,18 @@ export class WeedManager {
         } catch (e) {
             // malformed data -> ignore and continue
             // console.warn('weed load failed', e);
+        }
+    }
+
+    // Recompute all weeds' Y positions based on current terrain (call on resize)
+    repositionToTerrain() {
+        if (!this.terrain) return;
+        for (const w of this.weeds) {
+            try {
+                const newY = this.terrain.groundY(w.x);
+                w.y = newY;
+                if (w.container) w.container.y = newY;
+            } catch (e) { /* ignore */ }
         }
     }
 }

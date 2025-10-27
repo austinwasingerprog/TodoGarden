@@ -28,9 +28,28 @@ export class Background {
 
         this.layers = [];
         for (const cfg of this.mountainConfigs) {
-            const g = new Graphics();
-            this.container.addChild(g);
-            this.layers.push({ gfx: g, parallax: cfg.parallax, color: cfg.color, peaks: cfg.peaks, verticalBias: cfg.verticalBias });
+            const layerContainer = new Container();
+            this.container.addChild(layerContainer);
+            const gA = new Graphics();
+            const gB = new Graphics();
+            const gC = new Graphics();
+            layerContainer.addChild(gA, gB, gC);
+            this.layers.push({
+                container: layerContainer,
+                gfxA: gA,
+                gfxB: gB,
+                gfxC: gC,
+                parallax: cfg.parallax,
+                color: cfg.color,
+                peaks: cfg.peaks,
+                verticalBias: cfg.verticalBias,
+                tileWidth: 0,
+                // cached params for redraw-on-scroll
+                _baseIndex: null,
+                _gap: null,
+                _baseY: null,
+                _h: null
+            });
         }
 
         // cloud data
@@ -82,63 +101,109 @@ export class Background {
             this._clouds.push({ g, baseX, baseY, parallax: 0.25 + (i % 3) * 0.08 });
         }
 
-        // draw mountains
+        // draw tiled mountains (two tiles per layer so we can wrap infinitely)
         for (const layer of this.layers) {
-            const g = layer.gfx;
-            g.clear();
+            const gA = layer.gfxA;
+            const gB = layer.gfxB;
 
             const peaks = Math.max(3, layer.peaks);
-            const gap = Math.max(64, Math.floor(w / peaks));
-            const startX = -w;
-            const endX = w * 2;
+            const tileWidth = Math.max(Math.floor(w * 1.5), 800);
+            layer.tileWidth = tileWidth;
+            const gap = Math.max(48, Math.floor(tileWidth / peaks));
+            layer._gap = gap;
             const baseY = h * (layer.verticalBias ?? 0.5);
+            layer._baseY = baseY;
+            layer._h = h;
 
-            // compute peaks
-            const peakPoints = [];
-            for (let x = startX; x <= endX; x += gap) {
-                const offset = (gap * 0.5) * (0.5 + Math.sin(x * 0.001) * 0.5);
-                const peakX = x + offset;
-                const peakHeight = (0.12 + Math.abs(Math.sin(x * 0.013)) * 0.45) * h * 0.32;
-                const peakY = baseY - peakHeight;
-                peakPoints.push({ x: peakX, y: peakY, h: peakHeight });
-            }
+            // initially draw three tiles centered at worldStart  -tileWidth, 0, +tileWidth so seams are correct
+            this._drawMountainTile(layer, gA, -tileWidth, tileWidth);
+            this._drawMountainTile(layer, gB, 0, tileWidth);
+            this._drawMountainTile(layer, layer.gfxC, tileWidth, tileWidth);
 
-            // main mountain polygon
-            g.beginFill(layer.color);
-            g.moveTo(peakPoints[0].x, h + 50);
-            for (const p of peakPoints) g.lineTo(p.x, p.y);
-            g.lineTo(peakPoints[peakPoints.length - 1].x, h + 50);
-            g.lineTo(peakPoints[0].x, h + 50);
-            g.closePath();
-            g.endFill();
+            // mark base index so update() can detect camera crossing and redraw as needed
+            layer._baseIndex = 0;
 
-            // lighter band along the top ridge (simple polygon using a small offset below peaks)
-            g.beginFill(0xffffff, 0.12); // subtle highlight
-            const bandOffsetFactor = 0.18; // fraction of peak height used for band thickness
-            g.moveTo(peakPoints[0].x, peakPoints[0].y + peakPoints[0].h * bandOffsetFactor);
-            for (const p of peakPoints) g.lineTo(p.x, p.y + p.h * bandOffsetFactor);
-            // mirror back across the band to create a thin filled strip
-            for (let i = peakPoints.length - 1; i >= 0; i--) {
-                const p = peakPoints[i];
-                g.lineTo(p.x, p.y + Math.min(p.h * (bandOffsetFactor + 0.08), p.h * 0.45) + 2);
-            }
-            g.closePath();
-            g.endFill();
+            // position tiles adjacent; actual world alignment occurs in update()
+            gA.x = -tileWidth;
+            gB.x = 0;
+            layer.gfxC.x = tileWidth;
         }
+    }
+
+    // helper: draw one mountain tile using a worldStartX so adjacent tiles match exactly
+    _drawMountainTile(layer, g, worldStartX, tileWidth) {
+        const h = layer._h;
+        const baseY = layer._baseY;
+        const gap = layer._gap;
+        g.clear();
+
+        const peakPoints = [];
+        for (let lx = 0; lx <= tileWidth; lx += gap) {
+            const worldX = worldStartX + lx;
+            const offset = (gap * 0.5) * (0.5 + Math.sin(worldX * 0.001) * 0.5);
+            const peakX = lx + offset;
+            const peakHeight = (0.12 + Math.abs(Math.sin(worldX * 0.013)) * 0.45) * h * 0.32;
+            const peakY = baseY - peakHeight;
+            peakPoints.push({ x: peakX, y: peakY, h: peakHeight, worldX });
+        }
+
+        // ensure exact edges to avoid sub-pixel seams:
+        if (peakPoints.length >= 1) {
+            // first point precisely at 0
+            const firstWorld = worldStartX;
+            const firstHeight = (0.12 + Math.abs(Math.sin(firstWorld * 0.013)) * 0.45) * h * 0.32;
+            peakPoints[0].x = 0;
+            peakPoints[0].y = baseY - firstHeight;
+            // last point precisely at tileWidth
+            const last = peakPoints[peakPoints.length - 1];
+            const lastWorld = worldStartX + tileWidth;
+            const lastHeight = (0.12 + Math.abs(Math.sin(lastWorld * 0.013)) * 0.45) * h * 0.32;
+            last.x = tileWidth;
+            last.y = baseY - lastHeight;
+        }
+
+        g.beginFill(layer.color);
+        g.moveTo(peakPoints[0].x, h + 50);
+        for (const p of peakPoints) g.lineTo(p.x, p.y);
+        g.lineTo(peakPoints[peakPoints.length - 1].x, h + 50);
+        g.lineTo(peakPoints[0].x, h + 50);
+        g.closePath();
+        g.endFill();
     }
 
     // Update parallax based on camera/world translation (cameraX is world container x)
     update(cameraX = 0) {
         // clouds: move opposite cameraX by small factor
         for (const c of this._clouds) {
-            c.g.x = c.baseX + cameraX * c.parallax;
-            // optional gentle vertical bob
+            // clouds should move opposite the camera/player so they appear in the background
+            c.g.x = c.baseX - cameraX * c.parallax;
             c.g.y = c.baseY + Math.sin((cameraX + c.baseX) * 0.0008) * 6;
-        }
+         }
 
-        // mountains: move each layer by its parallax factor
-        for (const layer of this.layers) {
-            layer.gfx.x = cameraX * layer.parallax * 0.6;
-        }
-    }
-}
+         // mountains: tile each layer and offset by parallax. Use modulo to wrap tile positions.
+         for (const layer of this.layers) {
+             const tileW = layer.tileWidth || (this.app.renderer.width * 1.5);
+            // compute layer world-offset: layers should move opposite the camera,
+            // and use pure world-aligned coordinates (no extra ad-hoc multiplier).
+            const layerOffset = -cameraX * layer.parallax;
+            const baseIndex = Math.floor(layerOffset / tileW);
+            const baseStart = baseIndex * tileW;
+            const offsetWithin = layerOffset - baseStart; // may be negative
+
+             // if camera crossed a tile boundary, redraw three tiles (prev/current/next)
+             if (layer._baseIndex !== baseIndex) {
+                const prevStart = baseStart - tileW;
+                this._drawMountainTile(layer, layer.gfxA, prevStart, tileW);           // prev
+                this._drawMountainTile(layer, layer.gfxB, baseStart, tileW);          // current
+                this._drawMountainTile(layer, layer.gfxC, baseStart + tileW, tileW);  // next
+                 layer._baseIndex = baseIndex;
+             }
+
+             // place tiles so they wrap seamlessly (gfxB is the "current" tile at baseStart)
+             // round to integers to avoid sub-pixel gaps
+             layer.gfxA.x = Math.round(-offsetWithin - tileW);       // prev
+             layer.gfxB.x = Math.round(-offsetWithin);               // current
+             layer.gfxC.x = Math.round(-offsetWithin + tileW);       // next
+         }
+     }
+ }

@@ -44,18 +44,22 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
     await playerSpriteBuilder.build();
 
     const playerIdleAnim = playerSpriteBuilder.createAnimatedSprite('idle', { animationSpeed: 0.08, scale: 4 });
+    playerIdleAnim.gotoAndStop(0);
     playerIdleAnim.play();
 
     const playerRunAnim = playerSpriteBuilder.createAnimatedSprite('runRight', { animationSpeed: 0.12, scale: 4 });
+    playerRunAnim.gotoAndStop(0);
     playerRunAnim.loop = true;
     playerRunAnim.play();
     playerRunAnim.visible = false;
 
     const playerJumpAnim = playerSpriteBuilder.createAnimatedSprite('jump', { animationSpeed: 0.0, scale: 4 });
+    playerJumpAnim.gotoAndStop(0);
     playerJumpAnim.loop = false;
     playerJumpAnim.visible = false;
 
     const playerFallAnim = playerSpriteBuilder.createAnimatedSprite('fall', { animationSpeed: 0.10, scale: 4 });
+    playerFallAnim.gotoAndStop(0);
     playerFallAnim.loop = true;
     playerFallAnim.visible = false;
 
@@ -64,13 +68,11 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
     player.addChild(playerRunAnim);
     player.addChild(playerJumpAnim);
     player.addChild(playerFallAnim);
-    playerIdleAnim.anchor.set(0.5, 0.5);
-    playerRunAnim.anchor.set(0.5, 0.5);
-    playerJumpAnim.anchor.set(0.5, 0.5);
-    playerFallAnim.anchor.set(0.5, 0.5);
+    // DO NOT override child anchors here — SpriteSheetBuilder already set bottom-center anchors
+    // (removing the center-anchor overrides fixes the floating/visibility issue).
     player.x = app.renderer.width * 0.5;
     player.y = app.renderer.height * 0.2;
-    player.width = playerIdleAnim.width;
+    // keep container sizing automatic; don't force width from child textures
 
     world.addChild(player);
 
@@ -81,6 +83,15 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
         width: frameWidth * 4,
         height: frameHeight * 4,
     };
+
+    // position each AnimatedSprite so its visual bottom sits at container.y + halfHeight
+    // (physics treats player.y as the character center, so this makes visual bottom == player.y + halfHeight)
+    const frameHalfH = phys.height / 2 + 5;
+    [playerIdleAnim, playerRunAnim, playerJumpAnim, playerFallAnim].forEach(a => {
+        try { a.anchor.set(0.5, 1); } catch (e) { /* ignore if not AnimatedSprite */ }
+        a.x = 0;
+        a.y = frameHalfH;
+    });
 
     const keys = {};
     window.addEventListener('keydown', (e) => { keys[e.code] = true; });
@@ -108,7 +119,11 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
             g.destroy({ children: true, texture: false, baseTexture: false });
         }
         terrain.chunks.clear();
+        // regen chunks for the new viewport (visual only). Terrain world coords remain fixed,
+        // so we only need to re-create visuals for the new viewport size.
         terrain.updateForX(player.x);
+        // Do NOT change world coordinates (player.y / weed.y). Keeping world coordinates fixed
+        // preserves absolute positions regardless of devtools / resize.
     });
 
     const camera = { x: 0, y: 0, smooth: 0.12 };

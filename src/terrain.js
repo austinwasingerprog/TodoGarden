@@ -22,6 +22,10 @@ export class Terrain {
         this.seed = Number.isFinite(opts.seed) ? opts.seed | 0 : 0;
         this.octaves = Math.max(1, opts.octaves ?? 3);  // multi-octave for richness
 
+        // World coordinate height (fixed). Default to the renderer height at creation
+        // This makes terrain heights independent of later viewport/devtools changes.
+        this.worldHeight = Number.isFinite(opts.worldHeight) ? opts.worldHeight : (this.app && this.app.renderer ? this.app.renderer.height : 600);
+
         // build permutation table from seed
         this._buildPerm(this.seed);
 
@@ -102,8 +106,7 @@ export class Terrain {
 
     // core height function used by renderer & collision (worldX in pixels)
     heightForX(worldX) {
-        const h = this.app.renderer.height;
-        const baseY = h * 0.6; // keep roughly centered; caller can adjust by moving camera if needed
+        const baseY = this.worldHeight * 0.6; // fixed world baseline independent of viewport height
 
         // convert pixels -> noise domain: wavelength px per cycle -> freq = 1/wavelength
         const freq = 1 / this.wavelength;
@@ -123,7 +126,7 @@ export class Terrain {
     // generate a chunk polygon and cache it
     generateChunk(chunkIndex) {
         if (this.chunks.has(chunkIndex)) return;
-        const g = new Graphics();
+        const g = new PIXI.Graphics();
         g.zIndex = 0;
 
         const startX = chunkIndex * this.chunkWidthPx;
@@ -143,8 +146,9 @@ export class Terrain {
         g.beginFill(0x4e944f);
         g.moveTo(pts[0].x, pts[0].y);
         for (const p of pts) g.lineTo(p.x, p.y);
-        g.lineTo(endX, this.app.renderer.height + 200);
-        g.lineTo(startX, this.app.renderer.height + 200);
+        // use worldHeight for the "bottom" of the chunk (world coordinate)
+        g.lineTo(endX, this.worldHeight + 200);
+        g.lineTo(startX, this.worldHeight + 200);
         g.closePath();
         g.endFill();
 
@@ -181,5 +185,12 @@ export class Terrain {
             this.generateChunk(chunkIndex + i);
         }
         this.pruneChunks(chunkIndex);
+    }
+
+    // optional API to change world coordinate height intentionally (not tied to the viewport)
+    setWorldHeight(h) {
+        if (!Number.isFinite(h)) return;
+        this.worldHeight = h | 0;
+        // caller can regenerate chunks if they want visuals updated
     }
 }

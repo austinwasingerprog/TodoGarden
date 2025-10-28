@@ -6,6 +6,7 @@ import { WeedManager } from './weedManager.js';
 import { Dialog } from './ui/dialog.js';
 import { Controls } from './ui/controls.js';
 import spriteSheetUrl from './resources/adventurer-v1.5-Sheet.png';
+import { createTree } from './tree.js';
 
 // Constants
 const GRAVITY = 1200; // pixels / s^2
@@ -14,7 +15,7 @@ const SPRINT_MULTIPLIER = 2; // sprint speed = PLAYER_SPEED * SPRINT_MULTIPLIER
 const GROUND_TOLERANCE = 6; // px tolerance to snap to ground
 const FALL_VELOCITY_THRESHOLD = 80; // px/s downward to be considered "falling"
 const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
-
+const PLAYER_JUMP_VEL = 1000;
 (async () => {
     const app = new PIXI.Application(
         {
@@ -36,7 +37,7 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
 
     const controls = new Controls(app, { text: 'press [S] to plant a weed (to-do item) | press [E] to water (complete) a weed' });
     app.stage.addChild(controls.container);
-  
+
     const playerSpriteBuilder = new SpriteSheetBuilder(spriteSheetUrl, 50, 37);
     playerSpriteBuilder.addGridFrames(0, 0, 3, 0, 'idleFrame', 'idle');
     playerSpriteBuilder.addGridFrames(1, 1, 6, 1, 'runFrame', 'runRight');
@@ -77,8 +78,6 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
     player.y = app.screen.height * 0.2;
     // keep container sizing automatic; don't force width from child textures
 
-    world.addChild(player);
-
     const phys = {
         vx: 0,
         vy: 0,
@@ -110,7 +109,33 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
     });
     terrain.updateForX(player.x);
     if (terrain.container.parent === app.stage) app.stage.removeChild(terrain.container);
-    world.addChildAt(terrain.container, 0);
+
+    let treeY = terrain.groundY(0) + 10;
+    // create alpha tree (use opts to control appearance). showLeaves false -> starts hidden.
+    const alphaTree = createTree('alpha' + Math.random() * 1000, {
+        height: 420,
+        trunkWidth: 60,
+        leafSize: 10,
+        canopyDensity: 30,
+        x: 0,
+        y: treeY,
+        showLeaves: false
+    });
+    // ensure base position is correct and consistent with tree.update sway
+    //if (typeof alphaTree.setBasePosition === 'function') alphaTree.setBasePosition(0, treeY);
+    //if (typeof alphaTree.setLeavesVisible === 'function') alphaTree.setLeavesVisible(false);
+    world.addChild(alphaTree);
+
+    // keyboard: toggle leaves for debugging/runtime control (press 'L')
+    window.addEventListener('keydown', (e) => {
+        if (e.code === 'KeyL' && alphaTree && typeof alphaTree.toggleLeaves === 'function') {
+            const nowVis = alphaTree.toggleLeaves();
+            console.log('alphaTree leaves visible =', nowVis);
+        }
+    });
+
+    world.addChild(terrain.container);
+    world.addChild(player);
 
     // instantiate WeedManager with app, world, player, terrain
     // WeedManager will create its own dialog/button (it expects to own UI)
@@ -118,7 +143,7 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
 
     const onResize = () => {
         background.resize();
-        
+
         for (const g of terrain.chunks.values()) {
             g.destroy({ children: true, texture: false, baseTexture: false });
         }
@@ -127,7 +152,7 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
 
         controls.resize();
     };
-    
+
     window.addEventListener('resize', onResize);
     onResize();
 
@@ -167,6 +192,11 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
     app.ticker.add((delta) => {
         const dt = app.ticker.deltaMS / 1000;
         weedManager.update();
+        // update tree sway / runtime effects
+        try {
+            const now = (typeof performance !== 'undefined') ? performance.now() / 1000 : Date.now() / 1000;
+            if (alphaTree && typeof alphaTree.update === 'function') alphaTree.update(dt, now);
+        } catch (e) { /* ignore */ }
 
         const wateringNow = Boolean(keys['KeyE']);
         if (wateringNow && !wateringPressedPrev) {
@@ -192,7 +222,7 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
         phys.vx = move * PLAYER_SPEED * speedMul;
 
         if ((keys['Space'] || keys['KeyW'] || keys['ArrowUp']) && phys.onGround) {
-            phys.vy = -520;
+            phys.vy = -PLAYER_JUMP_VEL;
             phys.onGround = false;
         }
 

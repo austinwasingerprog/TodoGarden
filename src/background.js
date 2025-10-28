@@ -104,7 +104,7 @@ export class Background {
             this._cloudGroups.push({ cfg: gcfg, container: cont, items: [] });
         }
 
-        // Insert cloud containers relative to mountains: deterministic order (no removal/re-add in resize/update)
+        // Insert cloud containers relative to mountains: deterministic order
         for (const group of this._cloudGroups) {
             const insertAfterLayer = group.cfg.insertAfterLayer;
             if (insertAfterLayer === -1) {
@@ -160,7 +160,6 @@ export class Background {
         this._sky.endFill();
 
         // Clouds: if first time or view got much wider, ensure clouds cover visible span.
-        // Recompute base positions only; do not destroy/recreate containers.
         for (const group of this._cloudGroups) {
             const cfg = group.cfg;
             const span = Math.max(w * 3, this.worldTileWidth * 1.5);
@@ -186,8 +185,6 @@ export class Background {
             }
         }
 
-        // do NOT recompute mountain geometry here — mountains use worldTileWidth & worldHeight (stable).
-        // Update each layer's cached baseY/h in case caller intentionally changed worldHeight
         for (const layer of this.layers) {
             layer.baseY = this.worldHeight * (layer.verticalBias ?? 0.5);
             layer.h = this.worldHeight;

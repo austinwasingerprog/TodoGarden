@@ -108,7 +108,6 @@ export class Controls {
         // position container centered at bottom
         this.container.x = Math.round(w / 2);
         this.container.y = Math.round(h - this.margin - totalHeight / 2);
-        console.log(this.container.y);
 
         // draw each item stacked vertically (top -> bottom)
         let y = -totalHeight / 2;

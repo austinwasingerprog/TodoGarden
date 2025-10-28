@@ -179,6 +179,76 @@ const PLAYER_JUMP_VEL = 1000;
         background.update(camera.x);
     }
 
+    // -----------------------
+    // Mobile / pointer controls
+    // -----------------------
+    // map active pointerId -> 'left'|'right'|'none'
+    const activePointers = new Map();
+    const pointerTapInfo = new Map();
+    // prevent default touch behaviors (panning/zoom)
+    app.view.style.touchAction = 'none';
+
+    function screenToWorld(clientX, clientY) {
+        const rect = app.view.getBoundingClientRect();
+        const sx = clientX - rect.left;
+        const sy = clientY - rect.top;
+        const wx = sx - camera.x;
+        const wy = sy - camera.y;
+        return { sx, sy, wx, wy };
+    }
+
+    app.view.addEventListener('pointerdown', (ev) => {
+        const { sx, sy, wx, wy } = screenToWorld(ev.clientX, ev.clientY);
+        pointerTapInfo.set(ev.pointerId, { sx, sy, t: performance.now() });
+
+        // 1) Tap-on-weed takes priority over movement edges
+        try {
+            if (weedManager && Array.isArray(weedManager.weeds)) {
+                for (const w of weedManager.weeds) {
+                    const b = w.container && typeof w.container.getBounds === 'function' ? w.container.getBounds() : null;
+                    if (b && b.contains(sx, sy)) {
+                        // snap player nearby and call watering
+                        player.x = (typeof w.x === 'number') ? w.x : (w.container.x || player.x);
+                        terrain.updateForX(player.x);
+                        if (typeof weedManager.startWatering === 'function') weedManager.startWatering();
+                        // consume this touch
+                        activePointers.set(ev.pointerId, 'none');
+                        return;
+                    }
+                }
+            }
+        } catch (e) { /* ignore */ }
+
+        // 2) Edge-based movement (only if not tapping a weed)
+        const leftEdge = app.screen.width * 0.25;
+        const rightEdge = app.screen.width * 0.75;
+        if (sx < leftEdge) {
+            keys['ArrowLeft'] = true;
+            activePointers.set(ev.pointerId, 'left');
+        } else if (sx > rightEdge) {
+            keys['ArrowRight'] = true;
+            activePointers.set(ev.pointerId, 'right');
+        } else {
+            activePointers.set(ev.pointerId, 'none');
+        }
+    });
+
+    function releasePointer(id) {
+        const side = activePointers.get(id);
+        if (side === 'left') keys['ArrowLeft'] = false;
+        if (side === 'right') keys['ArrowRight'] = false;
+        activePointers.delete(id);
+        pointerTapInfo.delete(id);
+    }
+
+    app.view.addEventListener('pointerup', (ev) => {
+        releasePointer(ev.pointerId);
+        // optionally detect quick taps here if you want tap-on-up behavior
+    });
+    app.view.addEventListener('pointercancel', (ev) => releasePointer(ev.pointerId));
+    app.view.addEventListener('pointerout', (ev) => releasePointer(ev.pointerId));
+    app.view.addEventListener('pointerleave', (ev) => releasePointer(ev.pointerId));
+
     let wateringPressedPrev = false;
     let plantingPressedPrev = false;
 

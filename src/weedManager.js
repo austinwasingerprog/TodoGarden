@@ -109,26 +109,26 @@ export class WeedManager {
             try {
                 if (w.container && w.container.parent) this.world.removeChild(w.container);
                 if (w.container && typeof w.container.destroy === 'function') w.container.destroy({ children: true, texture: false, baseTexture: false });
-            } catch (e) {}
+            } catch (e) { }
         }
         this.weeds.length = 0;
 
         // destroy water particles
         for (const p of this._waters) {
-            try { if (p.gfx && p.gfx.parent) p.gfx.parent.removeChild(p.gfx); if (p.gfx) p.gfx.destroy(); } catch (e) {}
+            try { if (p.gfx && p.gfx.parent) p.gfx.parent.removeChild(p.gfx); if (p.gfx) p.gfx.destroy(); } catch (e) { }
         }
         this._waters.length = 0;
 
         // destroy splashes
         for (const s of this._splashes) {
-            try { if (s.gfx && s.gfx.parent) s.gfx.parent.removeChild(s.gfx); if (s.gfx) s.gfx.destroy(); } catch (e) {}
+            try { if (s.gfx && s.gfx.parent) s.gfx.parent.removeChild(s.gfx); if (s.gfx) s.gfx.destroy(); } catch (e) { }
         }
         this._splashes.length = 0;
 
         // persist empty garden
         try {
             localStorage.removeItem(this.storageKey);
-        } catch (e) {}
+        } catch (e) { }
     }
 
     // public api: called by Dialog (text string)
@@ -281,43 +281,41 @@ export class WeedManager {
         return head;
     }
 
-    // Start watering the nearest weed within range. This spawns a flood of water
-    // from the player's "head" to the weed. Called by main on E press.
     startWatering() {
         if (!this.player) return;
         // find nearest non-completed weed within range
         const px = this.player.x;
-        const headY = this.player.y; // water starts from visual head
         const py = this.player.y; // proximity checks use foot
-         let best = null;
-         let bestD = Infinity;
-         for (const w of this.weeds) {
-             if (w.completed) continue;
-             const d = this._distance(px, py, w.x, w.y);
-             if (d < bestD) { bestD = d; best = w; }
-         }
-         if (!best || bestD > 200) return; // too far to water
+        const headY = this.player.y - 25; // water starts from visual head
+        let best = null;
+        let bestD = Infinity;
+        for (const w of this.weeds) {
+            if (w.completed) continue;
+            const d = this._distance(px, py, w.x, w.y);
+            if (d < bestD) { bestD = d; best = w; }
+        }
+        if (!best || bestD > 200) return; // too far to water
 
-         // spawn several water particles aimed at the weed
-         const particles = 18;
-         for (let i = 0; i < particles; i++) {
+        // spawn several water particles aimed at the weed
+        const particles = 18;
+        for (let i = 0; i < particles; i++) {
             const start = { x: px + (Math.random() * 6 - 3), y: headY + (Math.random() * 8 - 4) };
-             const target = { x: best.x + (Math.random() * 20 - 10), y: best.y - 4 + (Math.random() * 8 - 4) };
-             const dur = 0.3 + Math.random() * 0.35;
- 
-             const g = new PIXI.Graphics();
-             g.beginFill(0x4EAFFC);
-             g.drawRect(-2, 0, 4, 12);
-             g.endFill();
-             g.x = start.x;
-             g.y = start.y;
-             g.rotation = 0.2 - Math.random() * 0.4;
-             g.alpha = 0.95;
-             // add to world (so it follows camera/transforms like other world objects)
-             this.world.addChild(g);
- 
-             this._waters.push({ gfx: g, start, target, elapsed: 0, dur, weed: best });
-         }
+            const target = { x: best.x + (Math.random() * 20 - 10), y: best.y - 4 + (Math.random() * 8 - 4) };
+            const dur = 0.3 + Math.random() * 0.35;
+
+            const g = new PIXI.Graphics();
+            g.beginFill(0x4EAFFC);
+            g.drawRect(-2, 0, 4, 12);
+            g.endFill();
+            g.x = start.x;
+            g.y = start.y;
+            g.rotation = 0.2 - Math.random() * 0.4;
+            g.alpha = 0.95;
+            // add to world (so it follows camera/transforms like other world objects)
+            this.world.addChild(g);
+
+            this._waters.push({ gfx: g, start, target, elapsed: 0, dur, weed: best });
+        }
     }
 
     // convert weed into a flower (visuals + mark completed)

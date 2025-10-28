@@ -15,7 +15,6 @@ export class Dialog {
             confirmButtonText: 'Add',
             focusConfirm: false,
             allowEnterKey: true,
-            // keep the confirm button disabled until valid input by using preConfirm + validation
             preConfirm: (v) => {
                 if (!v || !v.trim()) {
                     Swal.showValidationMessage('Please enter text');

@@ -16,84 +16,27 @@ const FALL_VELOCITY_THRESHOLD = 80; // px/s downward to be considered "falling"
 const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
 
 (async () => {
-    const app = new PIXI.Application({ resizeTo: window, resolution: 1, autoDensity: false });
+    const app = new PIXI.Application(
+        {
+            resizeTo: window,
+            resolution: window.devicePixelRatio || 1,
+            autoDensity: true
+        });
     app.view.style.imageRendering = 'pixelated';
-    document.body.appendChild(app.view);
-
-    // allow children drawn by zIndex so UI can sit above world/terrain
     app.stage.sortableChildren = true;
+    document.body.appendChild(app.view);
 
     const background = new Background(app);
     app.stage.addChildAt(background.container, 0);
     background.resize();
 
-    // central resize handler: main owns layout lifecycle so controls get repositioned correctly
-    // controls created later (after world) so they render on top
-    let controls = null;
-    const onResize = () => {
-        background.resize();
-        try { if (controls) controls.resize(); } catch (e) { /* ignore */ }
-    };
-    window.addEventListener('resize', onResize);
-    onResize();
-
-    // detect maximize / restore and handle minimize (visibility) and focus changes.
-    // There is no direct maximize/minimize event, so combine resize + visibility/focus heuristics.
-    let _lastOuterW = window.outerWidth, _lastOuterH = window.outerHeight;
-    let _lastInnerW = window.innerWidth, _lastInnerH = window.innerHeight;
-    function _handleWindowState(e) {
-        // ensure we run after the browser has a chance to resize canvas; try RAF then a short timeout fallback
-        const syncAndLayout = () => {
-            try {
-                // if inner size changed, force renderer resize so controls/background read updated dims
-                if (window.innerWidth !== _lastInnerW || window.innerHeight !== _lastInnerH) {
-                    try { app.renderer.resize(window.innerWidth, window.innerHeight); } catch (resizeErr) { /* ignore */ }
-                    _lastInnerW = window.innerWidth; _lastInnerH = window.innerHeight;
-                }
-            } finally {
-                // central layout update
-                onResize();
-            }
-        };
-
-        requestAnimationFrame(() => {
-            syncAndLayout();
-            // fallback in case renderer updates slightly later (covers maximize timing quirks)
-            setTimeout(syncAndLayout, 120);
-        });
-
-        // update outer size tracking
-        _lastOuterW = window.outerWidth; _lastOuterH = window.outerHeight;
-    }
-
-    // visibilitychange handles minimize / tab hidden; focus/blur cover other cases
-    document.addEventListener('visibilitychange', _handleWindowState, { passive: true });
-    window.addEventListener('focus', _handleWindowState, { passive: true });
-    window.addEventListener('blur', _handleWindowState, { passive: true });
-    // keep resize routed through the same handler (already added above)
-    // ensure we also respond to fullscreen changes
-    document.addEventListener('fullscreenchange', _handleWindowState);
-
     const world = new PIXI.Container();
     app.stage.addChild(world);
     app.stage.setChildIndex(world, app.stage.children.length - 1);
 
-    // create controls AFTER world so they sit above terrain/world visuals
-    controls = new Controls(app, { text: 'press [S] to plant a weed (to-do item) | press [E] to water (complete) a weed' });
+    const controls = new Controls(app, { text: 'press [S] to plant a weed (to-do item) | press [E] to water (complete) a weed' });
     app.stage.addChild(controls.container);
-    // ensure initial layout
-    try { controls.resize(); } catch (e) {}
-
-    // ticker-based renderer-size watcher: robustly detect maximize/restore timing and call onResize
-    let _lastRendererW = app.renderer.width, _lastRendererH = app.renderer.height;
-    app.ticker.add(() => {
-        const rw = app.renderer.width, rh = app.renderer.height;
-        if (rw !== _lastRendererW || rh !== _lastRendererH) {
-            _lastRendererW = rw; _lastRendererH = rh;
-            onResize();
-        }
-    });
-
+  
     const playerSpriteBuilder = new SpriteSheetBuilder(spriteSheetUrl, 50, 37);
     playerSpriteBuilder.addGridFrames(0, 0, 3, 0, 'idleFrame', 'idle');
     playerSpriteBuilder.addGridFrames(1, 1, 6, 1, 'runFrame', 'runRight');
@@ -129,8 +72,9 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
     player.addChild(playerFallAnim);
     // DO NOT override child anchors here — SpriteSheetBuilder already set bottom-center anchors
     // (removing the center-anchor overrides fixes the floating/visibility issue).
-    player.x = app.renderer.width * 0.5;
-    player.y = app.renderer.height * 0.2;
+    // use app.screen (logical/CSS pixels) so coordinates stay stable when resolution != 1
+    player.x = app.screen.width * 0.5;
+    player.y = app.screen.height * 0.2;
     // keep container sizing automatic; don't force width from child textures
 
     world.addChild(player);
@@ -172,21 +116,37 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
     // WeedManager will create its own dialog/button (it expects to own UI)
     const weedManager = new WeedManager(app, world, player, terrain);
 
-    window.addEventListener('resize', () => {
-        // central resize: keep visuals, UI and terrain visuals in sync
-        onResize(); // updates background + controls
+    const onResize = () => {
+        background.resize();
+        
         for (const g of terrain.chunks.values()) {
             g.destroy({ children: true, texture: false, baseTexture: false });
         }
         terrain.chunks.clear();
-        // regen chunks for the new viewport (visual only)
         terrain.updateForX(player.x);
+
+        controls.resize();
+    };
+    
+    window.addEventListener('resize', onResize);
+    onResize();
+
+    // ticker-based renderer-size watcher: robustly detect maximize/restore timing and call onResize
+    // track logical screen size instead of backing-buffer size
+    let _lastRendererW = app.screen.width, _lastRendererH = app.screen.height;
+    app.ticker.add(() => {
+        // use app.screen for camera centering (logical pixels)
+        const rw = app.screen.width, rh = app.screen.height;
+        if (rw !== _lastRendererW || rh !== _lastRendererH) {
+            _lastRendererW = rw; _lastRendererH = rh;
+            onResize();
+        }
     });
 
-    const camera = { x: 0, y: 0, smooth: 0.12 };
+    const camera = { x: 0, y: 0, smooth: 0.05 };
     function updateCamera(dt) {
-        const centerX = app.renderer.width / 2;
-        const centerY = app.renderer.height / 2;
+        const centerX = app.screen.width / 2;
+        const centerY = app.screen.height / 2;
         const targetX = centerX - player.x;
         const targetY = centerY - player.y;
 
@@ -206,17 +166,14 @@ const JUMP_VELOCITY_THRESHOLD = 80; // px/s upward to be considered "jumping"
 
     app.ticker.add((delta) => {
         const dt = app.ticker.deltaMS / 1000;
-        // update weeds (handles proximity labels & water)
         weedManager.update();
 
-        // watering on key-down edge (E)
-        const wateringNow = Boolean(keys['KeyE'] || keys['KeyZ']); // KeyZ optionally
+        const wateringNow = Boolean(keys['KeyE']);
         if (wateringNow && !wateringPressedPrev) {
             weedManager.startWatering();
         }
         wateringPressedPrev = wateringNow;
 
-        // plant (open dialog) on key-down edge (S)
         const plantingNow = Boolean(keys['KeyS']);
         if (plantingNow && !plantingPressedPrev) {
             if (weedManager && weedManager.dialog && typeof weedManager.dialog.open === 'function') {

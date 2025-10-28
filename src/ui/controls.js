@@ -6,10 +6,10 @@ export class Controls {
         // snap renderer to integer pixels to avoid sub-pixel blurring
         try { this.app.renderer.roundPixels = true; } catch (e) { /* ignore */ }
         // ensure high-res text textures on HiDPI displays
-        this.dpi = (typeof window !== 'undefined' && window.devicePixelRatio) ? window.devicePixelRatio : 1;
+        this.dpi = window.devicePixelRatio || 1;
         this.container = new PIXI.Container();
         this.container.zIndex = 10000;
-        this.container.interactive = false;
+        this.container.eventMode = 'none'; // disable interaction
 
         this.margin = opts.margin ?? 12;
         this._resizeHandler = this.resize.bind(this);
@@ -26,9 +26,9 @@ export class Controls {
             fontSize: opts.fontSize ?? 14,
             fill: opts.fill ?? 0xffffff,
             align: 'center',
-            dropShadow: true,
-            dropShadowAlpha: 0.55,
-            dropShadowDistance: 1,
+            //dropShadow: true,
+            //dropShadowAlpha: 0.55,
+            //dropShadowDistance: 1,
             lineHeight: opts.lineHeight ?? 18,
         });
 
@@ -62,14 +62,15 @@ export class Controls {
 
         for (const p of parts) {
             const bg = new PIXI.Graphics();
-            bg.interactive = false;
+            bg.eventMode = 'none';
+
             // text
             const txt = new PIXI.Text(p, this.style);
             // render text at device pixel resolution and snap to integer pixels
             try { txt.resolution = this.dpi; } catch (e) { /* ignore */ }
             txt.roundPixels = true;
             txt.anchor.set(0.5, 0.5);
-            txt.interactive = false;
+            txt.eventMode = 'none';
 
             // add bg first (so it sits behind text)
             this.container.addChild(bg);
@@ -90,8 +91,8 @@ export class Controls {
     }
 
     resize() {
-        const w = this.app.renderer.width;
-        const h = this.app.renderer.height;
+        const w = this.app.screen.width;
+        const h = this.app.screen.height;
 
         // measure each text and compute box sizes
         for (const it of this._items) {
@@ -107,6 +108,7 @@ export class Controls {
         // position container centered at bottom
         this.container.x = Math.round(w / 2);
         this.container.y = Math.round(h - this.margin - totalHeight / 2);
+        console.log(this.container.y);
 
         // draw each item stacked vertically (top -> bottom)
         let y = -totalHeight / 2;

@@ -261,48 +261,76 @@ export function createTree(seedOrText = 'tree', opts = {}) {
     // ---- draw branch polygons (shells) from centerlines ----
     function drawShells() {
         shells.clear();
+        accents.clear();
+
+        // grouping epsilon for shared points (pixels)
+        const eps = 0.5;
+        const keyFor = (x, y) => `${Math.round(x / eps)},${Math.round(y / eps)}`;
+
+        // collect local directions and thicknesses for every occurrence of a point
+        const occ = new Map(); // key -> [{dx,dy,thickness}]
+        for (const path of branchPaths) {
+            if (!path || path.length < 1) continue;
+            for (let i = 0; i < path.length; i++) {
+                const p = path[i];
+                let dx = 0, dy = 0;
+                if (i < path.length - 1) {
+                    dx = path[i + 1].x - p.x;
+                    dy = path[i + 1].y - p.y;
+                }
+                if ((Math.abs(dx) < 1e-6 && Math.abs(dy) < 1e-6) && i > 0) {
+                    dx = p.x - path[i - 1].x;
+                    dy = p.y - path[i - 1].y;
+                }
+                const L = Math.hypot(dx, dy) || 1;
+                dx /= L; dy /= L;
+                const k = keyFor(p.x, p.y);
+                if (!occ.has(k)) occ.set(k, []);
+                occ.get(k).push({ dx, dy, thickness: p.thickness || 1 });
+            }
+        }
+
+        // average directions per shared location -> produce a single normal per key
+        const normals = new Map(); // key -> {nx,ny}
+        for (const [k, arr] of occ.entries()) {
+            let sx = 0, sy = 0;
+            for (const a of arr) { sx += a.dx; sy += a.dy; }
+            const L = Math.hypot(sx, sy) || 1;
+            sx /= L; sy /= L;
+            // perpendicular normal
+            normals.set(k, { nx: -sy, ny: sx });
+        }
+
+        // build per-path left/right points using the averaged normals for shared vertices
         for (const path of branchPaths) {
             if (!path || path.length < 2) continue;
-            // compute left and right offsets
             const leftPts = [];
             const rightPts = [];
             for (let i = 0; i < path.length; i++) {
                 const p = path[i];
-                // direction: prefer next - prev, fallback to next or prev
-                let dx = 0, dy = -1;
-                if (i < path.length - 1) {
-                    dx = path[i + 1].x - p.x;
-                    dy = path[i + 1].y - p.y;
-                } else if (i > 0) {
-                    dx = p.x - path[i - 1].x;
-                    dy = p.y - path[i - 1].y;
+                const k = keyFor(p.x, p.y);
+                const n = normals.get(k);
+                let nx = n?.nx, ny = n?.ny;
+                if (typeof nx !== 'number' || typeof ny !== 'number') {
+                    // fallback to local perpendicular
+                    let dx = 0, dy = -1;
+                    if (i < path.length - 1) { dx = path[i + 1].x - p.x; dy = path[i + 1].y - p.y; }
+                    else if (i > 0) { dx = p.x - path[i - 1].x; dy = p.y - path[i - 1].y; }
+                    const L = Math.hypot(dx, dy) || 1; dx /= L; dy /= L;
+                    nx = -dy; ny = dx;
                 }
-                const len = Math.hypot(dx, dy) || 1;
-                dx /= len; dy /= len;
-                const px = -dy, py = dx; // perpendicular
                 const half = (p.thickness || 1) * 0.5;
-                leftPts.push({ x: p.x + px * half, y: p.y + py * half });
-                rightPts.push({ x: p.x - px * half, y: p.y - py * half });
+                leftPts.push({ x: p.x + nx * half, y: p.y + ny * half });
+                rightPts.push({ x: p.x - nx * half, y: p.y - ny * half });
             }
 
-            // build polygon: left points forward then right points reversed
+            // draw polygon for this path using the consistent normals
             shells.beginFill(trunkColor);
-            // move to first left
             shells.moveTo(leftPts[0].x, leftPts[0].y);
             for (let i = 1; i < leftPts.length; i++) shells.lineTo(leftPts[i].x, leftPts[i].y);
             for (let i = rightPts.length - 1; i >= 0; i--) shells.lineTo(rightPts[i].x, rightPts[i].y);
             shells.closePath();
             shells.endFill();
-
-            // small bevel at joints by overdrawing slightly using accent color (very thin)
-            accents.lineStyle(Math.max(1, Math.round((path[0].thickness || 1) * 0.06)), accentColor, 0.7);
-            // draw centerline accent for subtle bark texture
-            accents.moveTo(path[0].x, path[0].y);
-            for (let i = 1; i < path.length; i++) {
-                const midx = (path[i - 1].x + path[i].x) * 0.5 + (rnd() - 0.5) * 2;
-                const midy = (path[i - 1].y + path[i].y) * 0.5 + (rnd() - 0.5) * 2;
-                accents.quadraticCurveTo(midx, midy, path[i].x, path[i].y);
-            }
         }
     }
 

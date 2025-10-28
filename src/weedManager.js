@@ -167,7 +167,11 @@ export class WeedManager {
         // make sure plant draws upward from y=0 (root at 0) and add into outer container
         plant.y = 0;
         if (plant.pivot && typeof plant.pivot.set === 'function') plant.pivot.set(0, 0);
-        c.addChild(plant);
+        // add visuals as a child so wiggle/particles can be applied locally
+        const visuals = new PIXI.Container();
+        visuals.name = 'visuals';
+        visuals.addChild(plant);
+        c.addChild(visuals);
 
         // set outer container to sit exactly on the ground (plant root aligns to terrain)
         c.y = spawnY;
@@ -209,6 +213,19 @@ export class WeedManager {
         // bg will be drawn/updated when label is shown
         bg.visible = false;
 
+        // attention helpers: exclamation, particle list
+        const exclaim = new PIXI.Text('!', { fontSize: 26, fill: 0xFFDD33, fontWeight: 'bold' });
+        exclaim.anchor.set(0.5, 0.5);
+        exclaim.x = 0;
+        exclaim.y = -plant.height - 15;
+        exclaim.visible = false;
+        // don't add to visuals (so we can layer it above label) — we'll add to container after label/bg
+        visuals.addChild(exclaim);
+
+        // per-weed particle list (small floating sparks)
+        const localParticles = [];
+        let particleAcc = 0;
+
         // strike-through graphic (hidden until completed)
         const strike = new PIXI.Graphics();
         strike.visible = false;
@@ -224,6 +241,7 @@ export class WeedManager {
         c.addChild(label);
         c.addChild(strike);
         c.addChild(check);
+        c.addChild(exclaim);
 
         this.world.addChild(c);
 
@@ -240,6 +258,8 @@ export class WeedManager {
             strike,
             check,
             flower: null
+            // attention visuals/state
+            , exclaim, particles: localParticles, _particleAcc: 0
         };
 
         // if loaded and marked completed, immediately convert visuals to flower state
@@ -407,18 +427,81 @@ export class WeedManager {
             // apply subtle sway for alive weeds (not completed) using per-weed offset so each is independent
             if (w.container && !w.completed && w.container.sway) {
                 const s = w.container.sway;
-                // combine global time with per-weed offset and phase so weeds are out-of-phase / sometimes opposite
                 const tval = (this._swayTime * s.freq) + (s.phase || 0) + (s.offset || 0);
                 const v = Math.sin(tval);
-                // increase sway slightly when weed is nearer (draw attention)
                 const nearFactor = Math.max(0, 1 - (d / 200));
                 const rot = v * s.amp * (1 + nearFactor * 0.6);
+                // apply rotation to container (global sway) but keep visuals separate for local wiggle/x offset
                 w.container.rotation = rot;
-                w.container.x = w.x + v * (s.xAmp || 0) * (1 + nearFactor * 0.4);
+                w.container.x = w.x;
+                // local visuals wiggle pulse
+                try {
+                    const vis = w.container.getChildByName && w.container.getChildByName('visuals') || w.container.children[0];
+                    if (vis) {
+                        // small wiggle on plant child (not container) to draw attention
+                        const wiggle = Math.sin(tval * 2 + (s.phase || 0)) * 0.03 * (0.7 + nearFactor);
+                        if (vis.children && vis.children[0]) vis.children[0].x += wiggle;
+
+                        // blinking exclamation when out of proximity (or always if you prefer)
+                        if (w.exclaim) {
+                            w.exclaim.visible = (Math.floor(tval * 2) % 2 === 0) && !show;
+                        }
+                    }
+                } catch (e) { /* ignore */ }
+                // spawn small particles occasionally (only when not near player to draw attention)
+                if (!show && w.particles) {
+                    w._particleAcc = (w._particleAcc || 0) + dt;
+                    const rate = 0.25; // seconds between potential spawns
+                    if (w._particleAcc > rate) {
+                        w._particleAcc = 0;
+                        if (Math.random() < 0.8) {
+                            const pG = new PIXI.Graphics();
+                            pG.beginFill(0xFFD87A, 0.95);
+                            pG.drawCircle(0, 0, 2 + Math.random() * 2);
+                            pG.endFill();
+                            // attach to visuals so it moves with the weed
+                            const vis = w.container.getChildByName && w.container.getChildByName('visuals') || w.container.children[0];
+                            if (vis) {
+                                pG.x = (Math.random() * 36 - 18);
+                                pG.y = -Math.random() * 20;
+                                pG.alpha = 0.95;
+                                vis.addChild(pG);
+                                w.particles.push({
+                                    gfx: pG,
+                                    elapsed: 0,
+                                    dur: 0.9 + Math.random() * 0.8,
+                                    vx: (Math.random() - 0.5) * 8,
+                                    // higher upward velocity
+                                    vy: -40 - Math.random() * 80
+                                });
+                            } else {
+                                pG.destroy();
+                            }
+                        }
+                    }
+                }
             } else if (w.container) {
                 // reset transform for completed/unsupported plants
                 w.container.rotation = 0;
                 w.container.x = w.x;
+            }
+
+            // update per-weed particles (move up & fade)
+            if (w.particles && w.particles.length) {
+                for (let pi = w.particles.length - 1; pi >= 0; pi--) {
+                    const P = w.particles[pi];
+                    P.elapsed += dt;
+                    const tt = P.elapsed / P.dur;
+                    if (P.gfx) {
+                        P.gfx.x += (P.vx || 0) * dt;
+                        P.gfx.y += (P.vy || 0) * dt;
+                        P.gfx.alpha = Math.max(0, 1 - tt);
+                    }
+                    if (P.elapsed >= P.dur) {
+                        try { if (P.gfx && P.gfx.parent) P.gfx.parent.removeChild(P.gfx); if (P.gfx) P.gfx.destroy(); } catch (e) { }
+                        w.particles.splice(pi, 1);
+                    }
+                }
             }
         }
 

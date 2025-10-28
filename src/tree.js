@@ -44,7 +44,7 @@ export function createTree(seedOrText = 'tree', opts = {}) {
     const showLeavesOpt = (typeof opts.showLeaves === 'boolean') ? opts.showLeaves : true;
 
     const container = new Container();
-    container.pivot.set(0, 0);
+    // don't set pivot yet — we'll set it to the trunk base after trunkPath is built
     // store base position so update can safely apply temporary sway offsets
     container._baseX = Number.isFinite(opts.x) ? opts.x : 0;
     container._baseY = Number.isFinite(opts.y) ? opts.y : 0;
@@ -81,66 +81,10 @@ export function createTree(seedOrText = 'tree', opts = {}) {
             cx = nx; cy = ny;
             a += (rnd() - 0.5) * 0.18;
             segLen *= 0.96 + rnd() * 0.06;
-            t *= 0.78 + rnd() * 0.08;
+            // make thickness decay less aggressive so branches stay chunkier
+            t *= 0.8 + rnd() * 0.05;
         }
         return pts;
-    }
-
-    // recursive builder: create centerline for this branch, push it to branchPaths, and spawn children
-    function buildBranchPath(x, y, angle, length, thickness, depth) {
-        const path = makeCenterline(x, y, angle, length, thickness, Math.max(3, Math.floor(length / 18)));
-        branchPaths.push(path);
-        const endpoints = [];
-        const endPt = path[path.length - 1];
-        endpoints.push({ x: endPt.x, y: endPt.y });
-
-        // stop if we've reached max recursion depth
-        if (depth >= maxDepth) return endpoints;
-
-        // disallow children for short branches
-        const minChildLength = Math.max(30, Math.round(height * 0.06));
-        if (length < minChildLength) return endpoints;
-
-        // disallow children if this branch ends too low (near ground)
-        // crownStart computed later; use a soft threshold based on absolute height
-        // allow branching a bit lower to produce fuller shapes (closer to crown)
-        const minEndYForChildren = -Math.abs(height) * 0.12;
-        if (endPt.y > minEndYForChildren) return endpoints;
-
-        // compute bounded children count based on length and depth (longer branches can have a few children,
-        // but thin long branches will produce fewer)
-        const lengthFactor = Math.min(1, length / (height * 0.5)); // 0..1
-        const depthFactor = Math.max(0.2, 1 - depth / (maxDepth + 1));
-        // allow more children for long branches, but cap for stability
-        const maxChildren = Math.min(4, Math.max(1, Math.floor((branchFactor * 1.6 * lengthFactor) * (0.6 + depthFactor))));
-        const children = 1 + Math.floor(rnd() * maxChildren);
-        for (let i = 0; i < children; i++) {
-            const spread = 0.35 + rnd() * 0.9;
-            const dir = (i % 2 === 0) ? 1 : -1;
-            const delta = dir * (spread + rnd() * 0.4);
-            let newAngle = angle + delta + (rnd() - 0.5) * 0.18;
-            // bias children upward: clamp angles to avoid strongly downward branches
-            const minAngle = -Math.PI + 0.25;
-            const maxAngle = -0.25;
-            if (newAngle > maxAngle) newAngle = maxAngle - Math.abs((newAngle - maxAngle) * 0.35);
-            if (newAngle < minAngle) newAngle = minAngle + Math.abs((minAngle - newAngle) * 0.35);
-
-            const lenScale = 0.45 + rnd() * 0.45;
-            const newLen = length * lenScale;
-            if (newLen < minChildLength) continue; // skip too short children
-            const newThick = Math.max(1.2, thickness * (0.62 + rnd() * 0.36));
-            const childEnds = buildBranchPath(endPt.x, endPt.y, newAngle, newLen, newThick, depth + 1);
-            endpoints.push(...childEnds);
-        }
-
-        // occasional side twig (higher up only) - slightly more frequent for detail
-        if (rnd() < 0.36 && depth > 0 && length > (minChildLength * 1.2)) {
-            const twigAngle = angle + (rnd() - 0.5) * 1.6;
-            const twigBase = path[Math.max(1, Math.floor(path.length * 0.45))];
-            buildBranchPath(twigBase.x, twigBase.y, twigAngle, length * 0.45, Math.max(0.6, thickness * 0.35), depth + 1);
-        }
-
-        return endpoints;
     }
 
     // place leaf clusters from endpoints and random canopy points
@@ -181,7 +125,8 @@ export function createTree(seedOrText = 'tree', opts = {}) {
         sx = nx; sy = ny;
         mainAngle += (rnd() - 0.5) * 0.14;
         segLen *= 0.92 + rnd() * 0.08;
-        thickness *= 0.8 + rnd() * 0.08;
+        // taper trunk more gently
+        thickness *= 0.8 + rnd() * 0.06;
     }
     branchPaths.push(trunkPath);
 
@@ -204,7 +149,8 @@ export function createTree(seedOrText = 'tree', opts = {}) {
             const lenScale = 0.55 + rnd() * 0.42;
             const newLen = length * lenScale;
             // compute a child starting thickness that matches the parent's endpoint to avoid shell mismatch
-            const childStartThick = Math.max(0.8, end.thickness * (0.9 + rnd() * 0.2));
+            // start child thickness closer to parent's end to avoid thin necks
+            const childStartThick = Math.max(1.0, end.thickness * (0.96 + rnd() * 0.08));
             // still skip strongly downward children
             if (newAngle > -0.2) continue;
             const childEnds = buildBranch(end.x, end.y, newAngle, newLen, childStartThick, depth + 1);
@@ -332,7 +278,7 @@ export function createTree(seedOrText = 'tree', opts = {}) {
     }
 
     drawShells();
-    
+
     container.addChild(leaves);
     container.addChild(shells);
 
@@ -342,24 +288,32 @@ export function createTree(seedOrText = 'tree', opts = {}) {
     container.toggleLeaves = () => { leaves.visible = !leaves.visible; return leaves.visible; };
     container.getLeavesVisible = () => !!leaves.visible;
 
-    // small sway data for optional animation
+
+    const basePt = trunkPath[0];
+    container.pivot.set(basePt.x || 0, basePt.y || 0);
+
+
+    // small sway data for optional animation (pixels & radians)
+    // make amplitude be in visible pixels / radians
     container.sway = {
-        amp: 0.01 + rnd() * 0.06,
-        freq: 0.6 + rnd() * 1.2,
+        amp: 2 + rnd() * 6,           // horizontal sway in pixels
+        freq: 0.6 + rnd() * 1.2,     // oscillation speed
         phase: rnd() * Math.PI * 2,
-        xAmp: 0.3 + rnd() * 2.0
+        xAmp: 0.6 + rnd() * 1.6,     // horizontal multiplier
+        rotAmp: 0.01 + rnd() * 0.03  // rotation amplitude (radians)
     };
 
-    // runtime update: apply sway and optional time-based effects
-    // dt: seconds elapsed since last update (optional), now: seconds timestamp (optional)
-    container.update = (dt = 0, now = (typeof performance !== 'undefined' ? performance.now() / 1000 : Date.now() / 1000)) => {
-        // apply small sway: translate around base using stored parameters (non-destructive)
+    container._swayTime = 0;
+    container.update = (dt = 0) => {
         try {
             const s = container.sway || { amp: 0, freq: 0, phase: 0, xAmp: 0 };
-            const t = now;
-            const swayX = Math.sin(t * s.freq + s.phase) * s.amp * s.xAmp * (height / 400);
-            const swayR = Math.sin((t * s.freq + s.phase) * 0.6) * s.amp * 0.02;
-            container.x = container._baseX + swayX;
+
+            container._swayTime += Math.max(0, dt);
+            const t = container._swayTime + (s.phase || 0);
+            // use pixel/radian amplitudes so sway is visible
+            const swayX = Math.sin(t * s.freq) * (s.amp || 1) * (s.xAmp || 1);
+            const swayR = Math.sin(t * s.freq * 0.6) * (s.rotAmp || 0.02);
+            //container.x = container._baseX + swayX;
             container.rotation = swayR;
         } catch (e) { /* defensive */ }
     };

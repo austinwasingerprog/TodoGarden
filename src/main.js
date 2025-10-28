@@ -110,32 +110,22 @@ const PLAYER_JUMP_VEL = 1000;
     terrain.updateForX(player.x);
     if (terrain.container.parent === app.stage) app.stage.removeChild(terrain.container);
 
-    let treeY = terrain.groundY(0) + 10;
-    // create alpha tree (use opts to control appearance). showLeaves false -> starts hidden.
-    const alphaTree = createTree('alpha' + Math.random() * 1000, {
-        height: 420,
-        trunkWidth: 60,
-        branchFactor: 3,
-        minBranchThickness: 3,
-        depth: 4,
-        leafSize: 10,
-        canopyDensity: 30,
-        x: 0,
-        y: treeY,
-        showLeaves: true
-    });
-    // ensure base position is correct and consistent with tree.update sway
-    //if (typeof alphaTree.setBasePosition === 'function') alphaTree.setBasePosition(0, treeY);
-    //if (typeof alphaTree.setLeavesVisible === 'function') alphaTree.setLeavesVisible(false);
-    world.addChild(alphaTree);
-
-    // keyboard: toggle leaves for debugging/runtime control (press 'L')
-    window.addEventListener('keydown', (e) => {
-        if (e.code === 'KeyL' && alphaTree && typeof alphaTree.toggleLeaves === 'function') {
-            const nowVis = alphaTree.toggleLeaves();
-            console.log('alphaTree leaves visible =', nowVis);
-        }
-    });
+    const trees = [];
+    for (var i=0; i<10; i++) {
+        let treeX = i * 600;
+        let treeY = terrain.groundY(treeX) + 10;
+        const tree = createTree('tree' + i, {
+            height: 300 + Math.round(Math.random() * 200),
+            branchFactor: 3,
+            minBranchThickness: 1.8,
+            canopyDensity: 10 + Math.round(Math.random() * 20),
+            depth: 4,
+            x: treeX,
+            y: treeY
+        });
+        world.addChild(tree);
+        trees.push(tree);
+    }
 
     world.addChild(terrain.container);
     world.addChild(player);
@@ -194,12 +184,12 @@ const PLAYER_JUMP_VEL = 1000;
 
     app.ticker.add((delta) => {
         const dt = app.ticker.deltaMS / 1000;
+        
         weedManager.update();
-        // update tree sway / runtime effects
-        try {
-            const now = (typeof performance !== 'undefined') ? performance.now() / 1000 : Date.now() / 1000;
-            if (alphaTree && typeof alphaTree.update === 'function') alphaTree.update(dt, now);
-        } catch (e) { /* ignore */ }
+
+        for (const tree of trees) {
+            tree.update(dt);
+        }
 
         const wateringNow = Boolean(keys['KeyE']);
         if (wateringNow && !wateringPressedPrev) {

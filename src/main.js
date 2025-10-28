@@ -188,6 +188,27 @@ const PLAYER_JUMP_VEL = 1000;
     // prevent default touch behaviors (panning/zoom)
     app.view.style.touchAction = 'none';
 
+    // prevent long-press vibration / context menu on mobile
+    app.view.style.webkitUserSelect = 'none';
+    app.view.style.userSelect = 'none';
+    app.view.style.webkitTouchCallout = 'none';
+    app.view.style.webkitTapHighlightColor = 'transparent';
+
+    // block context menu
+    app.view.addEventListener('contextmenu', (e) => e.preventDefault());
+
+    // make touchstart non-passive so we can prevent the default long-press behavior that triggers haptics
+    app.view.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+    }, { passive: false });
+
+    // also prevent pointer context for some platforms
+    app.view.addEventListener('pointerdown', (e) => {
+        // don't prevent normal pointer handling here — only block the default OS long-press action
+        // calling preventDefault on pointerdown can be used if you still see haptics on some devices:
+        // e.preventDefault();
+    }, { passive: true });
+
     function screenToWorld(clientX, clientY) {
         const rect = app.view.getBoundingClientRect();
         const sx = clientX - rect.left;
@@ -201,36 +222,35 @@ const PLAYER_JUMP_VEL = 1000;
         const { sx, sy, wx, wy } = screenToWorld(ev.clientX, ev.clientY);
         pointerTapInfo.set(ev.pointerId, { sx, sy, t: performance.now() });
 
-        // 1) Tap-on-weed takes priority over movement edges
+        // 1) Edge-based movement takes priority — start moving even if pointer is over a weed
+        const leftEdge = app.screen.width * 0.25;
+        const rightEdge = app.screen.width * 0.75;
+        if (sx < leftEdge) {
+            keys['ArrowLeft'] = true;
+            activePointers.set(ev.pointerId, 'left');
+            return;
+        } else if (sx > rightEdge) {
+            keys['ArrowRight'] = true;
+            activePointers.set(ev.pointerId, 'right');
+            return;
+        }
+        activePointers.set(ev.pointerId, 'none');
+
+        // 2) If not an edge press, check for weed taps (water)
         try {
             if (weedManager && Array.isArray(weedManager.weeds)) {
                 for (const w of weedManager.weeds) {
                     const b = w.container && typeof w.container.getBounds === 'function' ? w.container.getBounds() : null;
                     if (b && b.contains(sx, sy)) {
-                        // snap player nearby and call watering
                         player.x = (typeof w.x === 'number') ? w.x : (w.container.x || player.x);
                         terrain.updateForX(player.x);
                         if (typeof weedManager.startWatering === 'function') weedManager.startWatering();
-                        // consume this touch
                         activePointers.set(ev.pointerId, 'none');
                         return;
                     }
                 }
             }
         } catch (e) { /* ignore */ }
-
-        // 2) Edge-based movement (only if not tapping a weed)
-        const leftEdge = app.screen.width * 0.25;
-        const rightEdge = app.screen.width * 0.75;
-        if (sx < leftEdge) {
-            keys['ArrowLeft'] = true;
-            activePointers.set(ev.pointerId, 'left');
-        } else if (sx > rightEdge) {
-            keys['ArrowRight'] = true;
-            activePointers.set(ev.pointerId, 'right');
-        } else {
-            activePointers.set(ev.pointerId, 'none');
-        }
     });
 
     function releasePointer(id) {

@@ -115,11 +115,14 @@ const PLAYER_JUMP_VEL = 1000;
     const alphaTree = createTree('alpha' + Math.random() * 1000, {
         height: 420,
         trunkWidth: 60,
+        branchFactor: 3,
+        minBranchThickness: 3,
+        depth: 4,
         leafSize: 10,
         canopyDensity: 30,
         x: 0,
         y: treeY,
-        showLeaves: false
+        showLeaves: true
     });
     // ensure base position is correct and consistent with tree.update sway
     //if (typeof alphaTree.setBasePosition === 'function') alphaTree.setBasePosition(0, treeY);

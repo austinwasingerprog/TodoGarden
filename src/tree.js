@@ -35,9 +35,8 @@ export function createTree(seedOrText = 'tree', opts = {}) {
     const trunkWidth = opts.trunkWidth ?? Math.round(30 + rnd() * 36);
     const maxDepth = opts.depth ?? Math.max(3, Math.floor(Math.log2(height) - 2));
     // allow more branching by default (can be overridden via opts.branchFactor)
-    const branchFactor = opts.branchFactor ?? 3 + (rnd() > 0.6 ? 1 : 0);
+    const branchFactor = opts.branchFactor ?? 3 + (rnd() > 0.8 ? 1 : 0);
     const trunkColor = opts.trunkColor ?? 0x6b4228;
-    const accentColor = opts.trunkAccent ?? 0x52311f;
     const leafColor = opts.leafColor ?? 0x2f9e4f;
     // denser canopy by default
     const canopyDensity = opts.canopyDensity ?? Math.round(40 + rnd() * 40);
@@ -59,7 +58,6 @@ export function createTree(seedOrText = 'tree', opts = {}) {
 
     // branch polygons container (filled shells)
     const shells = new Graphics();
-    const accents = new Graphics(); // thin accents along centerlines
 
     // will hold branch centerline paths: each is [{x,y,thickness}, ...]
     const branchPaths = [];
@@ -261,7 +259,6 @@ export function createTree(seedOrText = 'tree', opts = {}) {
     // ---- draw branch polygons (shells) from centerlines ----
     function drawShells() {
         shells.clear();
-        accents.clear();
 
         // grouping epsilon for shared points (pixels)
         const eps = 0.5;
@@ -335,18 +332,9 @@ export function createTree(seedOrText = 'tree', opts = {}) {
     }
 
     drawShells();
-
-    // ground shadow / root ellipse
-    const root = new Graphics();
-    root.beginFill(0x000000, 0.12);
-    root.drawEllipse(0, 6, trunkWidth * 0.95, trunkWidth * 0.4);
-    root.endFill();
-    root.cacheAsBitmap = true;
-
-    container.addChild(root);
-    container.addChild(shells);
-    container.addChild(accents);
+    
     container.addChild(leaves);
+    container.addChild(shells);
 
     // leaves visibility helpers
     leaves.visible = !!showLeavesOpt;

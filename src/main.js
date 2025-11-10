@@ -71,12 +71,9 @@ const PLAYER_JUMP_VEL = 1000;
     player.addChild(playerRunAnim);
     player.addChild(playerJumpAnim);
     player.addChild(playerFallAnim);
-    // DO NOT override child anchors here — SpriteSheetBuilder already set bottom-center anchors
-    // (removing the center-anchor overrides fixes the floating/visibility issue).
-    // use app.screen (logical/CSS pixels) so coordinates stay stable when resolution != 1
+
     player.x = app.screen.width * 0.5;
     player.y = app.screen.height * 0.2;
-    // keep container sizing automatic; don't force width from child textures
 
     const phys = {
         vx: 0,
@@ -86,8 +83,6 @@ const PLAYER_JUMP_VEL = 1000;
         height: 37 * 4,
     };
 
-    // position each AnimatedSprite so its visual bottom sits at container.y + halfHeight
-    // (physics treats player.y as the character center, so this makes visual bottom == player.y + halfHeight)
     const frameHalfH = phys.height / 2 + 5;
     [playerIdleAnim, playerRunAnim, playerJumpAnim, playerFallAnim].forEach(a => {
         try { a.anchor.set(0.5, 1); } catch (e) { /* ignore if not AnimatedSprite */ }
@@ -111,7 +106,7 @@ const PLAYER_JUMP_VEL = 1000;
     if (terrain.container.parent === app.stage) app.stage.removeChild(terrain.container);
 
     const trees = [];
-    for (var i=0; i<10; i++) {
+    for (var i=0; i<1; i++) {
         let treeX = i * 600;
         let treeY = terrain.groundY(treeX) + 10;
         const tree = createTree('tree' + i, {
@@ -130,8 +125,6 @@ const PLAYER_JUMP_VEL = 1000;
     world.addChild(terrain.container);
     world.addChild(player);
 
-    // instantiate WeedManager with app, world, player, terrain
-    // WeedManager will create its own dialog/button (it expects to own UI)
     const weedManager = new WeedManager(app, world, player, terrain);
 
     const onResize = () => {
@@ -149,11 +142,8 @@ const PLAYER_JUMP_VEL = 1000;
     window.addEventListener('resize', onResize);
     onResize();
 
-    // ticker-based renderer-size watcher: robustly detect maximize/restore timing and call onResize
-    // track logical screen size instead of backing-buffer size
     let _lastRendererW = app.screen.width, _lastRendererH = app.screen.height;
     app.ticker.add(() => {
-        // use app.screen for camera centering (logical pixels)
         const rw = app.screen.width, rh = app.screen.height;
         if (rw !== _lastRendererW || rh !== _lastRendererH) {
             _lastRendererW = rw; _lastRendererH = rh;
@@ -218,11 +208,10 @@ const PLAYER_JUMP_VEL = 1000;
         return { sx, sy, wx, wy };
     }
 
+    // pointerdown: only edge-based movement (taps no longer teleport/water weeds)
     app.view.addEventListener('pointerdown', (ev) => {
-        const { sx, sy, wx, wy } = screenToWorld(ev.clientX, ev.clientY);
+        const { sx, sy } = screenToWorld(ev.clientX, ev.clientY);
         pointerTapInfo.set(ev.pointerId, { sx, sy, t: performance.now() });
-
-        // 1) Edge-based movement takes priority — start moving even if pointer is over a weed
         const leftEdge = app.screen.width * 0.25;
         const rightEdge = app.screen.width * 0.75;
         if (sx < leftEdge) {
@@ -235,22 +224,6 @@ const PLAYER_JUMP_VEL = 1000;
             return;
         }
         activePointers.set(ev.pointerId, 'none');
-
-        // 2) If not an edge press, check for weed taps (water)
-        try {
-            if (weedManager && Array.isArray(weedManager.weeds)) {
-                for (const w of weedManager.weeds) {
-                    const b = w.container && typeof w.container.getBounds === 'function' ? w.container.getBounds() : null;
-                    if (b && b.contains(sx, sy)) {
-                        player.x = (typeof w.x === 'number') ? w.x : (w.container.x || player.x);
-                        terrain.updateForX(player.x);
-                        if (typeof weedManager.startWatering === 'function') weedManager.startWatering();
-                        activePointers.set(ev.pointerId, 'none');
-                        return;
-                    }
-                }
-            }
-        } catch (e) { /* ignore */ }
     });
 
     function releasePointer(id) {
